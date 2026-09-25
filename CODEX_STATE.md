@@ -1,101 +1,128 @@
 # Vigil state
 
-Checkpoint 1 is complete. Checkpoint 2 has **not** started. The initial
-repository contained only `PROJECT_BRIEF.pdf` version 3 (eight pages), fully
-read before editing. There was no prior code, build, Git history or remote.
+Checkpoint 2 is implemented and its final clean Linux gate passed on
+2026-09-25. Checkpoint 3 has **not** started. Development used one Codex agent,
+no delegation or additional Codex instance. The complete eight-page version 3
+brief, AGENTS.md, previous state, decisions and learning guide were read before
+edits. Starting commit `d37e81c` was clean and its complete clean gate passed.
 
-## Implemented
+## Implemented through Checkpoint 2
 
-- Dedicated real Ubuntu ARM64 Lima VM, pinned image/checksum, repository-only
-  mount, idempotent dependency and vcan setup scripts.
-- C11/CMake, strict warnings as errors, Debug and ASan/UBSan builds, CTest.
-- Exact classic CAN protocol: pod IDs 1..127, temperature/door int16 readings,
-  status, heartbeat state/uint32 uptime, separate per-ID counters, CRC-8/SMBUS.
-- Pure C decoder, explicit rejection enums, unchanged output on failure, and
-  stateless counter classification including gaps, wrap and half-range ambiguity.
-- Python SocketCAN simulator for one/two pods; deterministic samples, configurable
-  IDs/interval/count, clean SIGINT/SIGTERM shutdown, pinned dependencies.
-- `vigil-decode` literal-frame and bounded live SocketCAN diagnostic; JSON output.
-- 13 cmocka cases, six Python unittest cases, ten shared literal wire vectors,
-  real two-pod integration with independent receive checks and malformed traffic.
-- Protocol, architecture decisions, learning guide, setup instructions and
-  expected/actual verification record. Development performed by one agent.
+- Checkpoint 1 foundation remains: Ubuntu ARM64 Lima VM, strict C11/CMake,
+  original classic CAN protocol/CRC/counters, Python SocketCAN simulator,
+  C decoder diagnostic and ten shared cross-language wire vectors.
+- `vigild`: one main poll loop over nonblocking CAN, monotonic timerfd and
+  signalfd. Bounded 64-frame receive batches, signal-driven shutdown/status,
+  explicit descriptor cleanup, no project heap allocation or database calls.
+- Pure clock-injected monitoring core with separate per-channel freshness,
+  per-stream progress, and physical plausibility. Repeats/old frames reject;
+  forward gaps count inferred loss and accept usable data; wrap is supported.
+- Recovery after genuine decoded-stream silence resets sequence baselines;
+  continuously repeated frames cannot refresh data or reset themselves.
+- Per-source range, rate and flat-window checks. Invalid readings retain the
+  last usable value/time with current=0. Flatness is warning-level suspicion
+  and never a claim of proven sensor failure.
+- In-memory alarm lifecycle/severity/raise-clear times/transition counts,
+  threshold hysteresis, separate communication/sequence/invalid/flat/high/
+  pod-state categories. Stale/invalid data does not clear high alarms.
+- Small validated startup config for up to 16 chosen pod IDs and two channels;
+  built-in settings and `config/vigil.conf` match simulator pod 1.
+- Readable periodic/SIGUSR1/final snapshots and alarm transitions. Exact frame
+  outcomes/rejection reasons, valid readings, heartbeat, loss, stale/recovery,
+  reset and alarm counters; separate kernel-overflow/diagnostic-drop counts.
+- Minimum simulator fault control: `--repeat-each-frame` sends each original
+  frame twice. Wire bytes/semantics, decoder and shared vectors are unchanged.
+- 26 new cmocka monitoring/config cases (39 total) and a real SocketCAN daemon
+  integration gate. README, decisions, monitoring contract and learning guide
+  explain current behavior and its limits.
 
-## Environment
+## Environment and commands
 
-Host: macOS 26.5.1 ARM64, 8 GiB RAM, Lima 2.2.0 installed with Homebrew.
-VM: `vigil`, 2 CPUs, 2 GiB RAM, 12 GiB sparse disk, Ubuntu 24.04.5 LTS ARM64,
-kernel `6.8.0-139-generic`, systemd PID 1. GCC 13.3.0, CMake 3.28.3,
-cmocka 1.1.7, Python 3.12.3, python-can 4.6.1. vcan required the running
-kernel's `linux-modules-extra` package; setup handles that automatically.
+The repository's `vigil` Lima VM remains the real Linux gate: Ubuntu 24.04.5
+LTS ARM64, kernel `6.8.0-139-generic`, GCC 13.3.0, CMake 3.28.3, cmocka 1.1.7,
+Python 3.12.3/python-can 4.6.1. Host is Apple Silicon macOS. No macOS CAN mock
+or Python virtual bus was used.
 
-From macOS run `./scripts/dev up`, then `./scripts/dev ./scripts/check --clean`.
-For a Linux shell run `./scripts/dev`. Do not run shared Linux `.venv` binaries
-directly on macOS. Native Ubuntu uses `./scripts/setup-linux` then `./scripts/check`.
-VM is intentionally left available; test simulator/observer processes are cleaned
-up. Recreate `vcan0` after reboot with `./scripts/dev ./scripts/vcan-up`.
+From macOS:
 
-## Commands actually verified
+```sh
+./scripts/dev up
+./scripts/dev ./scripts/check --clean
+./scripts/dev build/vigild
+# Another terminal:
+./scripts/dev .venv/bin/python -m simulator.pod
+```
 
-- `./scripts/dev up`: downloaded/checksummed the pinned image, created Ubuntu,
-  installed justified dependencies, created `.venv`, and brought up `vcan0`.
-- `limactl stop vigil` followed by `./scripts/dev up`: VM restarted, setup
-  reran without extra package installs, and `vcan0` was recreated successfully.
-- `./scripts/dev ./scripts/check --clean`: full clean build/test gate passed.
-  Both Debug and ASan/UBSan builds passed all 13 cmocka cases; all six Python
-  tests passed; both decoder builds passed the complete real SocketCAN gate.
-  Each gate matched exactly 18 simulator frames (two pods, three cycles),
-  seven malformed frame reasons, literal vectors, invalid CLI arguments,
-  and SIGINT/SIGTERM shutdown. No sanitizer reports.
-- `./scripts/dev .venv/bin/python -m pip check`: no broken requirements.
-- `candump -L vcan0` independently observed all six first-cycle simulator
-  frames from `.venv/bin/python -m simulator.pod --pod-id 1 --pod-id 2 --cycles 1`.
-- `cansend vcan0 101#0098080000B7` followed by `cansend vcan0 101#0098080000B6`
-  through `build/vigil-decode --listen vcan0 2`: accepted value 2200, then CRC
-  rejection, expected exit 1. Earlier raw-socket/cansend loopback also passed.
-- Optimized Python (`-O`) was verified to fail the integration harness explicitly,
-  preventing disabled assertions from reporting false success.
-- `bash -n scripts/dev scripts/setup-linux scripts/vcan-up scripts/check` and
-  `git diff --check`: passed. Full diff reviewed for scope, ownership, integer
-  conversion, protocol agreement, lengths and accuracy of test/document claims.
+The VM was already running this session. Setup/reboot evidence from Checkpoint
+1 remains in `docs/VERIFICATION.md`; it was not repeated for Checkpoint 2.
+Use `./scripts/dev ./scripts/vcan-up` after reboot. Do not execute Linux build
+outputs or shared `.venv` binaries directly on macOS. Tests clean up their
+simulators/daemons and observers; the VM is intentionally left available.
 
-See `docs/VERIFICATION.md` for written expectations and observed frames.
+## Observed verification
 
-## Limitations and deferred work
+The final `./scripts/dev ./scripts/check --clean` rebuilt everything after
+review fixes. Both Debug and ASan/UBSan passed all 39 cmocka cases; all six
+Python unit tests passed. Both old decoder integration gates and both new
+real daemon gates passed. No compiler warnings or sanitizer reports.
 
-No unresolved Checkpoint 1 defect is known. Evidence is limited to the Linux
-ARM64 environment above. vcan does not model real arbitration/bitrate/wiring.
-CRC and counters cannot authenticate senders; counters cannot unambiguously
-order distances of 128+ increments, determine arbitrary losses, or distinguish
-restart from replay. The syntax decoder accepts fault status as an encoding;
-future monitoring must reject its measurement as unusable. No physical checks
-or runtime counter baselines exist yet. The live probe is not `vigild` and
-subscribes only to classic data/RTR frames, not CAN FD or error notifications.
+- Normal two-pod simulator: exactly 18 frames, 12 usable readings, 6 heartbeats,
+  zero rejects/loss; distinct channel values and stream baselines verified.
+- Repeated simulator: exactly 36 frames, 12 usable readings, 6 heartbeats,
+  18 repeat rejections, zero inferred loss.
+- Stop pod 1 while pod 2 runs: three communication alarms, last-known values
+  stale/current=0, pod 2 current. With timeout 600 ms/tick 20 ms, observed
+  clean-run alarm ages included [606, 606, 606] ms Debug and [617, 617, 617] ms
+  sanitized. The final post-review clean run also passed (sanitized ages
+  [622, 622, 622] ms); every run passed the 600..820 ms scheduling bound.
+  Restart produced 3 recoveries/2 baseline resets, no rejects/inferred loss.
+- Nine malformed frames rejected by exact reason without value/timestamp/alarm
+  changes. Gap accepted with loss=3; repeat/old/range/fault/unknown-pod rejected;
+  threshold oscillation produced one raise and one clear. `cansend` reached
+  the live daemon independently.
+- Ongoing repeated readings stayed stale across more than three timeouts while
+  progressing heartbeats remained fresh. SIGUSR1 snapshots and SIGINT/SIGTERM
+  shutdown passed, including startup failure paths and optimized-Python guard.
+- `/proc` inspection found one CAN socket, one timerfd, one signalfd and no open
+  config file. A deliberately unread 4 KiB diagnostic pipe did not stop CAN
+  processing/timeouts; drops were counted and high alarm state retained.
+  Closing the pipe reader did not cause SIGPIPE termination.
+- Shell syntax and diff whitespace checks passed. Full change review covered
+  scope, ownership, lengths, conversions, clock arithmetic, counter/reset policy,
+  rejected-value immutability, config, alarm lifecycle and documentation claims.
 
-Deferred: daemon event loop, freshness/progress/plausibility, configurable
-alarms/hysteresis and monitoring counters (Checkpoint 2); PostgreSQL/libpq,
-persistence thread/queue/history (Checkpoint 3); systemd notify/watchdog service,
-libFuzzer, CI, load/outage/crash evidence and scripted demo (later core/evidence
-work). No Buildroot, dashboard, API, Modbus, authentication or hardware work.
+See `docs/CHECKPOINT_2_VERIFICATION.md` for expectations and final results.
 
-## Exact next checkpoint: 2 — monitoring daemon core, no database
+## Limits and deferred work
 
-1. Read the complete PDF and project state/decisions/learning guide; inspect Git
-   history/status; rerun `./scripts/dev ./scripts/check --clean` for the baseline.
-2. Build `vigild` around CAN + `poll()` + monotonic `timerfd` + `signalfd` with
-   explicit resource cleanup. Reuse the pure decoder/counter helper, not the
-   diagnostic CLI as a production event loop.
-3. Add per-pod reading and heartbeat counter baselines, per-channel freshness
-   and plausibility state, explicit recovery/reset policy, loss/rejection counts,
-   communication-lost handling, and stale last-known values.
-4. Add simple source/timeout/range/rate/flat-window/alarm configuration, in-memory
-   alarm lifecycle/severity/timestamps/hysteresis and human-readable diagnostics.
-5. Use injectable monotonic time in core cmocka tests. Exercise actual vcan
-   silence/restart, repeated counters, malformed traffic and multiple channels;
-   add only the minimum simulator fault controls needed for those tests.
-6. Clean verification, diff review, documentation/state update and local commit.
-   Do not add PostgreSQL until Checkpoint 3.
+No known unresolved Checkpoint 2 defect. Evidence is Ubuntu ARM64/vcan only,
+not physical CAN, high-rate capacity or real-time latency guarantees. CRC and
+8-bit counters cannot authenticate, resolve arbitrary loss/replay or reliably
+identify rapid restarts. Recovery policy and slope re-baselining are explicit
+in `docs/MONITORING.md`. Receive timestamps are userspace processing times;
+backlog can delay them. Kernel overflow reports may lag until the next frame.
 
-The initial checkpoint uses per-command Git author `Codex <codex@localhost>`
-because no user identity was configured. No global Git config changes and no
-remote publishing. Identify this checkpoint with `git log -1 --oneline`.
+Alarms/counters are volatile; stdout is not durable history. Full pipes drop
+counted diagnostics; regular-file writes can still block. No config reload,
+CAN FD/error subscription, PostgreSQL/libpq, persistence thread/queue, systemd
+notify/watchdog service, fuzz target, CI, outage/crash evidence, dashboard,
+API, Modbus, authentication, Buildroot or hardware work was added.
+
+## Exact next checkpoint: 3 — persistence, only when authorized
+
+1. Reread the complete brief and current records, inspect Git, rerun the clean
+   Checkpoint 2 gate before changes. Preserve all monitoring semantics/tests.
+2. Add the bounded persistence queue and dedicated writer thread that exclusively
+   owns libpq. Use connect_timeout/statement_timeout. Copy batches under the
+   mutex, release it, then perform I/O. Never put database calls in poll/core.
+3. Keep alarm state owned by monitoring memory. Add distinct queued/written/
+   dropped/outage counters; preserve exact evidence of history loss.
+4. Implement finite buffering, oldest-reading drops when full, persistence-
+   degraded alarm, gap history and current-alarm snapshot upon recovery.
+   Do not claim crash durability for an in-memory queue.
+5. Add deterministic queue tests and real PostgreSQL outage/recovery evidence,
+   update docs/state, review, clean gate and local checkpoint commit.
+
+This checkpoint uses per-command Git identity `Codex <codex@localhost>` as
+Checkpoint 1 did, without changing global settings or publishing. Identify
+its commit with `git log -1 --oneline`.

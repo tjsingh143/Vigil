@@ -1,5 +1,9 @@
 # Engineering decisions
 
+Checkpoint 1 entries below are historical. The final section records the
+authorized Checkpoint 2 implementation; [MONITORING.md](MONITORING.md) describes
+the current monitoring policy.
+
 ## Scope and authority
 
 Read the complete eight-page version 3 brief before editing. The repository
@@ -113,3 +117,64 @@ architectural constraints from the brief, not implemented capabilities here.
 No global Git identity was configured. The initial checkpoint commit uses the
 explicit per-command author `Codex <codex@localhost>`; user Git settings are
 unchanged. No remote is configured or contacted for publishing.
+
+## Checkpoint 2 — monitoring core (2026-09-25)
+
+The owner explicitly authorized completing and locally committing Checkpoint
+2 using one Codex agent. The complete version 3 PDF and required records were
+reread before edits; the previous clean Linux gate passed. The section-7
+process deviation (agent implements; owner learns and reviews) remains
+explicit. No subagents or other Codex instances were used.
+
+The brief's main-thread architecture is implemented literally: nonblocking
+classic CAN socket, monotonic periodic timerfd, blocked signals delivered
+through signalfd, one poll loop. Signals precede CAN batches; each batch caps
+at 64 reads to bound starvation. No event framework, sleeping poll, worker
+thread or database dependency. The daemon runs in the foreground; systemd
+notify/watchdog supervision remains later work as recorded at Checkpoint 1.
+
+`monitor.c` owns state and accepts monotonic milliseconds. Its only callback
+is a synchronous bounded alarm-transition notification; the Linux adapter
+emits diagnostics. The core allocates no heap, does no I/O and reads no clocks.
+Fixed arrays cap state at 16 configured pods; configuration is parsed once
+and copied by value. Each chosen ID has one or two channels. Defaults match
+simulator pod 1. Invalid configuration fails startup without silent fallback.
+
+Freshness is per channel and separately per heartbeat. No valid data by the
+deadline raises communication loss, which may coexist with invalid readings
+or sequence anomalies. This is not a wiring diagnosis. Fault/booting heartbeat
+means fresh communication with non-operational pod state. `current` derives
+from the channel's value, freshness and measurement validity; it is not an
+overall pod-health boolean.
+
+Reset sequence baselines after a full interval with no decoded stream traffic,
+not merely no accepted values. This permits recovery from silence without
+periodically accepting an endless repeated frame. Uptime/boot state cannot
+reset a stream. Reading silence uses the longest channel timeout. Both channels
+share sequence accounting even if one is excluded. Physical/status rejection
+still advances an accepted sequence. Fast-restart/replay ambiguity remains
+explicit; counters and CRC provide no authentication.
+
+Physical checks use integer wire units. Rate compares with the last valid
+value while fresh; after a stale gap, range-checked data starts a new slope
+reference. Flatness requires equal accepted readings over a configured window,
+not elapsed silence. Its warning neither invalidates data nor proves failure.
+Door defaults disable rate and flat checks.
+
+Thresholds raise at >= high and clear at <= clear, with clear < high. These
+inclusive boundaries refine the brief's illustrative above-27/below-26 example
+and support binary door values. Stale/invalid data provides no clearing
+evidence for high alarms. Communication, sequence, invalid measurement, flat
+suspicion, high value and pod state are distinct categories in monitoring memory.
+
+Readable snapshots and transitions expose exact counters and monotonic times.
+Bounded nonblocking diagnostic writes avoid a full pipe stalling monitoring;
+dropped lines are counted and later snapshots recover current state. Regular
+file output can still block; no general logging framework is added. Kernel
+receive drops remain separate from inferred losses. No wire behavior changed,
+so protocol version 1 and all shared literal vectors are unchanged.
+
+Checkpoint 3 is the next core work: persistence thread, bounded queue,
+PostgreSQL history and outage behavior. It must own libpq/database calls,
+never hold queue locks across I/O, and treat monitoring memory as current
+alarm authority. None of those persistence features are implemented here.

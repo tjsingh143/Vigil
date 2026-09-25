@@ -1,13 +1,13 @@
-# Understanding Checkpoint 1
+# Understanding Vigil: Checkpoints 1 and 2
 
 ## What exists today
 
-A Python program pretends to be one or two sensor pods. It sends CAN frames
-through Linux. A small C program receives those frames and validates/decodes
-them using the same library tested by cmocka. There is no monitoring daemon
-yet: decoding alone does not decide whether a source is healthy or raise an
-alarm. Start with `README.md` to run it, then read `src/protocol.c` alongside
-`docs/PROTOCOL.md`.
+A Python program pretends to be one or two sensor pods and sends CAN frames
+through Linux. The C daemon `vigild` decodes them, checks their freshness,
+progress and physical plausibility, and maintains alarms in memory. A smaller
+decoder diagnostic remains useful for examining literal frames. Start with
+`README.md`, then read `src/protocol.c` alongside `docs/PROTOCOL.md`, followed
+by `src/monitor.c` and `docs/MONITORING.md`. PostgreSQL is not implemented yet.
 
 ## What vcan and SocketCAN mean
 
@@ -86,9 +86,10 @@ can still appear fresh. Two senders can produce anomalies, but counters cannot
 prove there are two senders or identify either of them. An attacker can also
 send an apparently advancing sequence.
 
-The current helper returns these facts without storing a baseline. Checkpoint
-2 must own the per-pod state, rejection counters and explicit reset/recovery
-policy. We have not yet implemented non-advancing rejection in a daemon.
+The protocol helper returns these facts without storing a baseline. The
+Checkpoint 2 monitor owns each pod's two stream baselines, rejection counts
+and reset/recovery policy. A repeat or old frame is rejected, counted and
+raises a sequence anomaly; a gap is counted while useful data is accepted.
 
 ## How the test proves the interaction
 
@@ -106,14 +107,117 @@ the same literal fixtures but their own encoder. If one side changes byte
 order, IDs, CRC, channel numbering or status semantics, the fixtures should
 fail. The fixtures themselves still need review when the protocol changes.
 
-## Where this leads
+## Three different questions, with examples
 
-Next, the monitor will answer three separate questions: whether fresh data is
-arriving, whether the publisher's sequence advances, and whether values make
-physical sense. A heartbeat alone cannot make an old temperature current.
-A stable value alone cannot prove a failed sensor. A high temperature alarm
-will use separate raise/clear thresholds so tiny fluctuations do not cause
-repeated alarm transitions. Those behaviors belong to Checkpoint 2.
+Freshness asks whether a usable reading arrived recently. If the temperature
+has not updated for three seconds, its old number remains visible but marked
+stale and `current=0`. The heartbeat answers its own communication question;
+it cannot make old temperature data current. At startup a source is unknown,
+not healthy, and gets one timeout interval before a communication alarm.
+
+Progress asks whether counters advance. A pod can repeatedly transmit the
+same frame and fill the bus while making no progress. Vigil rejects those
+repeats and does not refresh the usable reading time. With continuing repeats,
+the sequence warning and a later communication-lost alarm can both be active.
+That does not prove spoofing, a second device or even broken wiring.
+
+Plausibility asks whether a progressing measurement makes physical sense.
+An impossible value or rate is invalid even if it just arrived with a new
+counter. It cannot replace the last good value. Flatness is weaker evidence:
+equal accepted readings for the configured window raise `flat_suspicion`,
+but remain valid. A stable room can be stable; a closed door can stay closed.
+Door flat checking is therefore disabled by default.
+
+These dimensions are separate fields and alarms. `current` only tells a
+consumer whether that channel's displayed value is fresh and valid; it is
+not a universal pod-health flag. Heartbeat state and sequence anomalies remain
+visible even when a channel has recent usable data.
+
+## What poll(), timerfd and signalfd do
+
+Read `src/vigild.c` from `main()` into `receive_batch()`. The main loop gives
+`poll()` three file descriptors and asks Linux to sleep until one is ready.
+It does not repeatedly query them in a busy loop. A readable CAN socket means
+frames can be received. The daemon handles at most 64 per turn, then returns
+to poll so a stream of input cannot indefinitely starve shutdown and timers.
+
+A timerfd turns a clock expiration into a readable descriptor. Every 100 ms
+by default, it wakes poll even if the bus is completely silent. Reading it
+returns the number of expirations; missed periods are counted, and the monitor
+compares actual elapsed time rather than pretending every tick was on time.
+CLOCK_MONOTONIC prevents a wall-clock adjustment from creating a false age.
+Unit tests supply explicit milliseconds, so boundary checks need no sleeps.
+
+SIGINT, SIGTERM and SIGUSR1 are blocked from ordinary asynchronous delivery.
+signalfd delivers their records in the same poll loop. The code can process
+them in normal program flow, request a snapshot or exit through cleanup,
+without doing unsafe logging/state changes from an asynchronous signal
+handler. SIGPIPE is also consumed so a closed diagnostic reader cannot kill
+monitoring. The CAN socket, timerfd and signalfd all have one owner and close
+on handled exits; the original signal mask and output flags are restored.
+
+## Exactly what happens when a pod goes silent
+
+1. The last usable temperature/door readings and progressing heartbeat retain
+   their individual receive timestamps. No new usable frames refresh them.
+2. Timerfd keeps waking the main loop. At each age >= configured timeout,
+   monitoring sets that source stale, increments its stale-event count and
+   activates its communication alarm. A two-channel pod normally has three
+   separate deadlines; their alarms can occur at different times.
+3. The last-known values remain visible with current=0. Existing high alarms
+   stay active because silence provides no evidence that the room cooled.
+   Further ticks do not repeatedly raise the same alarm.
+4. A simulator restart after stream silence establishes new counter baselines.
+   Fresh usable readings clear their own communication alarms and increment
+   recovery counts. A heartbeat clears only its own communication alarm.
+5. Range checks still apply on recovery. Rate restarts from the first new
+   in-range value because the previous slope reference is stale. Flatness
+   starts a new observation window after the gap.
+
+In the quiet-bus case the timer observes a deadline within one tick after it,
+plus Linux scheduling delay; this is not a real-time guarantee. The
+baseline-reset timer measures lack of *decoded traffic*, not lack of
+accepted values. Endless repeats therefore cannot reset their baseline and
+periodically pretend to recover. A quick restart without enough silence can
+look old or like a gap; an eight-bit counter cannot resolve that ambiguity.
+
+## Why hysteresis prevents flapping
+
+With one threshold, samples 26.99, 27.01, 26.99, 27.01 C could produce repeated
+clear/raise events. Vigil raises at >=27 C and clears only at <=26 C. After
+raising, all those samples leave the alarm active. Only evidence at or below
+26 C clears it. Clear and raise thresholds must be distinct; the configuration
+validator enforces this. An open door raises at 1 and clears at 0.
+
+An alarm contains its active state, severity, raise/clear timestamps and
+transition count. The state machine changes these once per transition.
+Temperature/door high alarms and communication loss are critical by default;
+sequence, measurement-invalid, flat-suspicion and pod-state alarms are warnings.
+Stale or rejected readings cannot clear an existing high alarm.
+
+## Reading the evidence
+
+`frames = valid_readings + heartbeats + rejected`. Rejection reasons sum to
+the rejected total. A forward gap contributes to `loss` while its usable
+reading contributes to valid_readings; a repeat contributes only a rejection.
+After a deliberate silence reset, unknown losses are not guessed. Linux
+socket overflow is reported separately and may overlap inferred sequence loss.
+
+SIGUSR1 asks for a snapshot. Source rows distinguish last value, freshness,
+validity and current; progress rows show per-stream repeats/loss/baselines;
+alarm rows show lifecycle times. All timestamps are Linux monotonic ms, not
+UTC. Subtract started_ms to get elapsed daemon time. Dropped diagnostic lines
+are counted, so an incomplete snapshot is not suitable for exact evidence.
+Alarms remain in memory even when a diagnostic pipe fills. They are lost on
+daemon restart; stdout is not database history.
+
+The Checkpoint 2 gate exercises the real daemon on vcan0, including a stopped
+pod while another continues, restart, duplicates, malformed frames, hysteresis,
+signals and a deliberately unread output pipe. Deterministic C tests cover
+exact counter, range, rate, flat-window and timeout boundaries. See
+`docs/CHECKPOINT_2_VERIFICATION.md` for observed results and limits.
+
+## Next: persistence (Checkpoint 3, not started)
 
 Later, PostgreSQL will store history from a dedicated persistence thread.
 Monitoring must not wait for a database call. Memory buffering will be bounded

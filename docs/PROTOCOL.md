@@ -18,7 +18,7 @@ incompatible changes require coordinated encoder/decoder deployment.
 
 Temperature is in 0.01 degrees Celsius, with wire range -32768..32767
 (-327.68..327.67 C). Physical plausibility limits are separate monitoring
-policy, to be implemented in Checkpoint 2. Door is 0 closed or 1 open; other
+policy in [MONITORING.md](MONITORING.md). Door is 0 closed or 1 open; other
 values are malformed even with fault status. Status 1 is a valid *encoding*,
 not a usable measurement. Decoding never establishes physical validity.
 
@@ -69,8 +69,10 @@ A gap is evidence of a sequence anomaly, not proof of physical bus loss.
 Half-range ordering requires fewer than 128 increments between observations.
 Larger gaps, restart, wrap-delayed replay, and interleaved publishers cannot
 be distinguished reliably using an 8-bit counter. A forged advancing sequence
-passes. Timeout/reset policy belongs to Checkpoint 2 and is not implemented
-by the stateless decoder. Never claim sender authentication or duplicate-pod
+passes. Timeout/reset policy is implemented by Checkpoint 2 monitoring and
+documented in [MONITORING.md](MONITORING.md), not by the stateless decoder.
+No wire behavior changed in Checkpoint 2; the literal vectors remain unchanged.
+Never claim sender authentication or duplicate-pod
 identification from these checks.
 
 ## Decoder contract and examples

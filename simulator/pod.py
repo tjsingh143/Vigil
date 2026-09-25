@@ -41,6 +41,8 @@ def main() -> int:
                         help="seconds between cycles (default 1)")
     parser.add_argument("--cycles", type=int, default=0,
                         help="stop after N cycles; 0 means run until signalled")
+    parser.add_argument("--repeat-each-frame", action="store_true",
+                        help="fault injection: immediately transmit each frame twice")
     args = parser.parse_args()
     ids = args.pod_id or [1]
     if (not 1 <= len(ids) <= 2 or len(set(ids)) != len(ids) or
@@ -70,9 +72,10 @@ def main() -> int:
                 uptime_s = int(time.monotonic() - start)
                 for pod in pods:
                     for can_id, data in pod.cycle(tick, uptime_s):
-                        bus.send(can.Message(arbitration_id=can_id, data=data,
-                                             is_extended_id=False, check=True),
-                                 timeout=1.0)
+                        for _ in range(2 if args.repeat_each_frame else 1):
+                            bus.send(can.Message(arbitration_id=can_id, data=data,
+                                                 is_extended_id=False, check=True),
+                                     timeout=1.0)
                 tick += 1
                 if args.cycles and tick >= args.cycles:
                     break

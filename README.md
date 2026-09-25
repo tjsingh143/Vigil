@@ -1,9 +1,10 @@
 # Vigil
 
 Vigil detects stale or invalid sensor data and is intended to keep monitoring
-when its sources or database fail. **Checkpoint 1 is implemented:** protocol,
-simulated pods, validated C decoding, and real Linux CAN integration. The
-monitoring daemon and database behavior are later checkpoints.
+when its sources or database fail. **Checkpoint 2 is implemented:** a Linux C
+monitoring daemon, simulated pods, validated decoding, separate freshness/
+progress/plausibility checks, in-memory alarms and real SocketCAN integration.
+PostgreSQL persistence belongs to Checkpoint 3 and has not been started.
 
 `PROJECT_BRIEF.pdf` version 3 is the specification. This is an original small
 protocol inspired by sensor-pod monitoring, not an implementation of A-Link.
@@ -62,6 +63,37 @@ Default: pod 1, one cycle/second. Each cycle emits temperature, door, heartbeat
 for each configured pod. Values follow a deterministic pattern. Heartbeat
 uptime measures actual monotonic elapsed seconds.
 
+Add `--repeat-each-frame` to transmit each frame twice for deliberate counter
+fault injection. Counters still advance normally between original frames;
+the daemon rejects and counts each immediate repeat.
+
+## Run the monitoring daemon
+
+```sh
+# Terminal 1: foreground daemon, default pod 1, 3-second freshness timeouts
+./scripts/dev build/vigild
+
+# Terminal 2: default pod 1; Ctrl-C stops it and demonstrates communication loss
+./scripts/dev .venv/bin/python -m simulator.pod
+```
+
+The daemon emits alarm transitions and periodic readable status snapshots.
+Stopping the pod makes its two readings and heartbeat stale; old values remain
+visible with `current=0`. Restarting after the timeout recovers fresh values
+and clears communication alarms. Stop the daemon with Ctrl-C. To request an
+extra snapshot, send SIGUSR1 to the Linux PID printed in its readiness line
+(`./scripts/dev kill -USR1 1234`, replacing 1234 with that PID).
+
+Use `--config config/vigil.conf` for explicit settings. Its comments show how
+to enable pod 2 before starting a two-pod simulator. Default temperature
+alarms raise at 27 C and clear at 26 C; door alarms raise on open and clear on
+closed. Ranges, rates, flatness windows and timeouts are per source.
+[Monitoring contract](docs/MONITORING.md) explains configuration, alarm
+lifecycle, reset policy, timestamps, counters and diagnostic output limits.
+
+`vigild` exits 0 after SIGINT/SIGTERM and 2 on usage/setup/I/O failure. It runs
+as the normal user, with no database, background fork or systemd service yet.
+
 Decode a literal frame without a CAN interface:
 
 ```sh
@@ -84,10 +116,13 @@ The complete local gate requires an otherwise idle `vcan0`:
 ./scripts/dev ./scripts/check --clean
 ```
 
-It rebuilds Debug and ASan/UBSan variants with warnings as errors, runs cmocka
-and Python tests, sets up `vcan0`, then runs both decoder builds against real
-simulators and malformed traffic. Any failure exits nonzero. No integration
-test is silently skipped. Evidence is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
+It rebuilds Debug and ASan/UBSan variants with warnings as errors, runs 39
+cmocka cases in each build and six Python tests, sets up `vcan0`, then runs
+both decoder and daemon variants against real simulators and malformed traffic.
+Daemon checks include exact counts, independent pod stop/restart, repeats,
+staleness, hysteresis, signals and diagnostic backpressure. Any failure exits
+nonzero; no integration is silently skipped. Evidence:
+[Checkpoint 1](docs/VERIFICATION.md), [Checkpoint 2](docs/CHECKPOINT_2_VERIFICATION.md).
 
 Individual commands inside Linux:
 
@@ -97,6 +132,7 @@ cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 .venv/bin/python tests/integration.py --decoder build/vigil-decode
+.venv/bin/python tests/monitor_integration.py --daemon build/vigild
 ```
 
 Use `-DVIGIL_SANITIZERS=ON` in a separate build directory for sanitizers.
@@ -108,16 +144,19 @@ checkpoint. Real bus integration currently runs locally in this Ubuntu VM.
 
 | Path | Purpose |
 | --- | --- |
-| `include/vigil/`, `src/` | Pure C protocol and counter primitives |
+| `include/vigil/`, `src/` | C protocol, monitoring core, startup config and Linux daemon |
+| `config/` | Example daemon settings matching built-in defaults |
 | `tools/` | Linux C decoder diagnostic |
 | `simulator/` | Python encoder, deterministic pods, pinned dependencies |
 | `tests/` | cmocka, Python, shared literal vectors, Linux integration |
 | `env/`, `scripts/` | Reproducible Ubuntu VM, setup and verification |
 | `docs/PROTOCOL.md` | Exact wire contract |
+| `docs/MONITORING.md` | Runtime policy, configuration and status contract |
 | `docs/DECISIONS.md` | Decisions and brief interpretation |
 | `docs/LEARNING_GUIDE.md` | Plain-English implementation explanation |
 | `CODEX_STATE.md` | Current state and exact next checkpoint |
 
 CRC/counters do not authenticate senders. vcan proves Linux application
 behavior; it cannot model arbitration, bitrate limits, wiring or electrical
-faults. No hardware, throughput, daemon, database or durability claim is made.
+faults. No hardware, throughput, database or durability claim is made. Diagnostics
+are not stored history; current alarms and counters exist only in daemon memory.
