@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo"
+if [[ $(uname -s) == Linux ]]; then
+    if [[ ${1:-} == up ]]; then
+        exec ./scripts/setup-linux
+    fi
+    if [[ $# == 0 ]]; then exec bash; fi
+    exec "$@"
+fi
+if [[ $(uname -s) != Darwin || $(uname -m) != arm64 ]]; then
+    echo 'Use Linux or an Apple Silicon Mac.' >&2
+    exit 1
+fi
+if ! command -v limactl >/dev/null; then
+    echo 'Install Lima first: brew install lima' >&2
+    exit 1
+fi
+if [[ ${1:-} == up ]]; then
+    if limactl list --format '{{.Name}}' | grep -qx vigil; then
+        limactl start --tty=false vigil
+    else
+        limactl start --tty=false --name=vigil --mount-only "$repo:w" env/lima.yaml
+    fi
+    exec limactl shell --workdir "$repo" vigil ./scripts/setup-linux
+fi
+exec limactl shell --workdir "$repo" vigil "$@"

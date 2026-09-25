@@ -1,0 +1,15 @@
+# Only the repository is mounted by scripts/dev (no host home mount).
+vmType: vz
+arch: aarch64
+cpus: 2
+memory: 2GiB
+disk: 12GiB
+images:
+  - location: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+    digest: sha256:7b682958a67ff5de068e36de6af8b75fa645d296af5a70d6500527f6a33781db
+mountType: virtiofs
+mounts: []
+containerd:
+  system: false
+  user: false

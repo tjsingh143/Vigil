@@ -1,0 +1,13 @@
+# ID HEX kind pod channel value status counter state uptime_s
+# Literal fixtures; CRC independently calculated by polynomial long division.
+# 22.00 C, INT16_MIN/fault, INT16_MAX, -0.01 C, closed/open, uptime boundaries.
+101 0098080000b7 1 1 0 2200 0 0 0 0
+17f 00008001ffed 1 127 0 -32768 1 255 0 0
+102 00ff7f007f8b 1 2 0 32767 0 127 0 0
+101 00ffff008073 1 1 0 -1 0 128 0 0
+101 010000000165 1 1 1 0 0 1 0 0
+102 01010000fe80 1 2 1 1 0 254 0 0
+701 01000000000029 2 1 0 0 0 0 1 0
+77f 0078563412ffcb 2 127 0 0 0 255 0 305419896
+702 02ffffffff80cf 2 2 0 0 0 128 2 4294967295
+101 000000000000 1 1 0 0 0 0 0 0

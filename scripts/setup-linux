@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 1; }
+cd -- "$(dirname -- "$0")/.."
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
+    libcmocka-dev python3-venv can-utils iproute2 kmod
+# Ubuntu cloud images may omit the vcan module from the base kernel package.
+if ! modinfo vcan >/dev/null 2>&1; then
+    sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+fi
+python3 -m venv .venv
+.venv/bin/python -m pip install -r simulator/requirements.txt
+exec ./scripts/vcan-up

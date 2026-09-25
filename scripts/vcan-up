@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 1; }
+sudo modprobe vcan
+if ! ip link show vcan0 >/dev/null 2>&1; then
+    sudo ip link add dev vcan0 type vcan
+fi
+ip -details link show vcan0 | grep -qw vcan || { echo 'vcan0 is not vcan' >&2; exit 1; }
+sudo ip link set dev vcan0 up
+ip -details link show vcan0
