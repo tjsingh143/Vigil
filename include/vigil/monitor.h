@@ -33,7 +33,7 @@ bool vigil_config_load(const char *path, struct vigil_config *out,
 enum vigil_alarm_kind {
     VIGIL_ALARM_COMMUNICATION, VIGIL_ALARM_SEQUENCE,
     VIGIL_ALARM_INVALID, VIGIL_ALARM_FLAT, VIGIL_ALARM_HIGH,
-    VIGIL_ALARM_POD_STATE
+    VIGIL_ALARM_POD_STATE, VIGIL_ALARM_PERSISTENCE
 };
 enum vigil_severity { VIGIL_WARNING, VIGIL_CRITICAL };
 struct vigil_alarm {

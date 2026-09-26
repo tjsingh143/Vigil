@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 1; }
+# Local default cluster only. For remote DBs, apply migration/grants as its owner.
+sudo -u postgres psql -v ON_ERROR_STOP=1 <<'SQL'
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='vigil') THEN
+        CREATE ROLE vigil LOGIN;
+    END IF;
+END $$;
+SQL
+if [[ $(sudo -u postgres psql -Atc "SELECT count(*) FROM pg_database WHERE datname='vigil'") == 0 ]]; then
+    sudo -u postgres createdb vigil
+fi
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d vigil < migrations/001_history.sql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d vigil <<'SQL'
+REVOKE ALL ON SCHEMA vigil FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION vigil.write_batch(jsonb) FROM PUBLIC;
+GRANT CONNECT ON DATABASE vigil TO vigil;
+GRANT USAGE ON SCHEMA vigil TO vigil;
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA vigil TO vigil;
+GRANT EXECUTE ON FUNCTION vigil.write_batch(jsonb) TO vigil;
+SQL

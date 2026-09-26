@@ -1,7 +1,8 @@
 # Monitoring contract (Checkpoint 2)
 
-`vigild` is a foreground Linux daemon with one thread, no database dependency,
-no explicit heap allocation and bounded state for 16 configured pods.
+`vigild` is a foreground Linux daemon whose main thread owns monitoring.
+The monitoring core uses no heap allocation and has bounded state for 16 pods.
+Checkpoint 3 adds a separately owned persistence thread and allocated queue.
 `src/monitor.c` is the clock-injected core; `src/config.c` loads startup
 configuration; `src/vigild.c` owns descriptors and diagnostics. Wire version 1
 and the shared cross-language vectors are unchanged.
@@ -133,7 +134,8 @@ does not assert a current above-threshold measurement.
 Every alarm stores active state, severity, last raise/clear monotonic times
 and lifetime transition count. Prior cleared time remains when it raises
 again. The monitoring thread owns all state. Its synchronous transition
-callback must not reenter the core or block. No database or queue exists yet.
+callback must not reenter the core or block. Checkpoint 3 now copies transitions
+to the bounded persistence queue; libpq remains exclusively in the writer thread.
 
 ## Diagnostics and exact counts
 
@@ -153,7 +155,8 @@ inferred missing sequence frames, not measured physical bus loss.
 `stale_events`, `recoveries`, `alarm_transitions` and `counter_resets` count
 transitions, not polling iterations. Per-source accepted and per-stream
 sequence counts explain totals. Monitoring counters have their own structure;
-future persistence queue/write/drop/outage counters belong to a separate group.
+persistence queue/write/drop/outage counters are in a separate `persistence` row
+following each snapshot; see [PERSISTENCE.md](PERSISTENCE.md).
 
 `rx_overflow` comes from Linux SO_RXQ_OVFL. It is distinct from sequence loss
 and must not be added to it as an independent loss. It updates only when a
@@ -173,3 +176,7 @@ extended IDs for rejection accounting. CAN FD and error notifications are
 not subscribed to. Arrival times currently mark userspace processing; socket
 backlog can delay them. Bounded batches and overflow counters are safeguards,
 not high-rate capacity evidence. No physical CAN performance claim is made.
+
+Checkpoint 3 adds PostgreSQL history and systemd supervision without changing
+these monitoring decisions or wire semantics. History timestamps include UTC
+and monotonic ms; monitoring freshness still uses monotonic time only.

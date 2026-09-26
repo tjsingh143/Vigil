@@ -1,128 +1,129 @@
 # Vigil state
 
-Checkpoint 2 is implemented and its final clean Linux gate passed on
-2026-09-25. Checkpoint 3 has **not** started. Development used one Codex agent,
-no delegation or additional Codex instance. The complete eight-page version 3
-brief, AGENTS.md, previous state, decisions and learning guide were read before
-edits. Starting commit `d37e81c` was clean and its complete clean gate passed.
+Checkpoint 3 is implemented, reviewed and documented. Its final complete clean
+Linux regression passed on 2026-09-26. Checkpoint 4 has not started.
+One Codex agent performed all work without delegation or other Codex instances.
+The full eight-page version 3 brief and all required records were reread before
+code changes. Starting commit `aa785cb` was clean; its complete clean gate and
+a short real vcan simulator/daemon smoke passed before implementation.
 
-## Implemented through Checkpoint 2
+## Implemented through Checkpoint 3
 
-- Checkpoint 1 foundation remains: Ubuntu ARM64 Lima VM, strict C11/CMake,
-  original classic CAN protocol/CRC/counters, Python SocketCAN simulator,
-  C decoder diagnostic and ten shared cross-language wire vectors.
-- `vigild`: one main poll loop over nonblocking CAN, monotonic timerfd and
-  signalfd. Bounded 64-frame receive batches, signal-driven shutdown/status,
-  explicit descriptor cleanup, no project heap allocation or database calls.
-- Pure clock-injected monitoring core with separate per-channel freshness,
-  per-stream progress, and physical plausibility. Repeats/old frames reject;
-  forward gaps count inferred loss and accept usable data; wrap is supported.
-- Recovery after genuine decoded-stream silence resets sequence baselines;
-  continuously repeated frames cannot refresh data or reset themselves.
-- Per-source range, rate and flat-window checks. Invalid readings retain the
-  last usable value/time with current=0. Flatness is warning-level suspicion
-  and never a claim of proven sensor failure.
-- In-memory alarm lifecycle/severity/raise-clear times/transition counts,
-  threshold hysteresis, separate communication/sequence/invalid/flat/high/
-  pod-state categories. Stale/invalid data does not clear high alarms.
-- Small validated startup config for up to 16 chosen pod IDs and two channels;
-  built-in settings and `config/vigil.conf` match simulator pod 1.
-- Readable periodic/SIGUSR1/final snapshots and alarm transitions. Exact frame
-  outcomes/rejection reasons, valid readings, heartbeat, loss, stale/recovery,
-  reset and alarm counters; separate kernel-overflow/diagnostic-drop counts.
-- Minimum simulator fault control: `--repeat-each-frame` sends each original
-  frame twice. Wire bytes/semantics, decoder and shared vectors are unchanged.
-- 26 new cmocka monitoring/config cases (39 total) and a real SocketCAN daemon
-  integration gate. README, decisions, monitoring contract and learning guide
-  explain current behavior and its limits.
+Checkpoint 1/2 protocol, monitoring decisions, cross-language vectors and real
+Linux integration remain. Persistence now adds:
+
+- Dedicated C pthread owns libpq. Main's poll/CAN/timer/signal loop and current
+  alarms never call PostgreSQL or consult it as the source of current truth.
+- Mutex-protected value-owned FIFO lanes: N pending readings (default 1024),
+  256 events, plus one immutable writer batch of at most 32 records. Exact
+  oldest-pending drops, high water, depths and in-flight counters; no queue
+  lock covers network/SQL/formatting I/O. Condition wait predicates share the
+  publication lock; retry wakeups cannot bypass the one-second backoff.
+- PostgreSQL schema v1 with run UUIDs, readings/heartbeat/rejection/alarm
+  history, and atomic batch checkpoints carrying gaps, outage evidence and
+  complete current-alarm snapshots. Lost responses retry the identical payload
+  and batch ID without double writes or double acknowledgement.
+- Client connection/query deadlines of two seconds, server statement timeout
+  1000 ms and lock timeout 500 ms, numeric/Unix endpoints. All database calls
+  stay in the writer. Async libpq explicitly enforces connect_timeout intent.
+- Main owns persistence-degraded, raised on failure/overflow/startup and cleared
+  after catch-up. Readable status exposes exact queue/write/drop/failure/outage/
+  gap/snapshot counters, SQLSTATE, and shutdown abandonment.
+- One-second shutdown drain, join-before-destroy ordering. A crash loses memory;
+  new runs never pretend to restore vanished history or exact old-run losses.
+- Real systemd Type=notify/WatchdogSec=4s service, unprivileged account, hardening,
+  on-failure restart, reproducible install/schema setup with preserved config.
+- Six queue/health cmocka cases (45 total), including 20,000 concurrent publications;
+  real PostgreSQL/vcan/outage/slow-query/lost-response/crash/service gates.
+  Strict Debug, ASan/UBSan, TSan and Helgrind are part of scripts/check.
+
+The pending capacity plus immutable batch is an explicit refinement of the
+brief's queue-capacity wording, required to handle uncertain COMMIT outcomes
+honestly. The switch from blocking to deadline-driven libpq within the writer
+is also recorded in docs/DECISIONS.md. Neither changes the central ownership
+invariant. Detailed contract: docs/PERSISTENCE.md.
 
 ## Environment and commands
 
-The repository's `vigil` Lima VM remains the real Linux gate: Ubuntu 24.04.5
-LTS ARM64, kernel `6.8.0-139-generic`, GCC 13.3.0, CMake 3.28.3, cmocka 1.1.7,
-Python 3.12.3/python-can 4.6.1. Host is Apple Silicon macOS. No macOS CAN mock
-or Python virtual bus was used.
-
-From macOS:
+Host: Apple Silicon macOS. Real Linux gate: existing `vigil` Lima VM,
+Ubuntu 24.04 ARM64, Linux 6.8.0-139-generic, GCC 13.3.0, cmocka 1.1.7,
+Python 3.12.3/python-can 4.6.1, PostgreSQL/libpq 16.15, systemd 255,
+Valgrind 3.22.0. No macOS SocketCAN mock or Python virtual bus.
 
 ```sh
-./scripts/dev up
 ./scripts/dev ./scripts/check --clean
-./scripts/dev build/vigild
-# Another terminal:
+# Monitoring-only foreground demo:
+./scripts/dev build/vigild --no-persistence
 ./scripts/dev .venv/bin/python -m simulator.pod
+# Reproducible default service/database installation:
+./scripts/dev ./scripts/install-service
+./scripts/dev ./scripts/setup-database
+./scripts/dev ./scripts/vcan-up
+./scripts/dev sudo systemctl enable --now vigild
 ```
 
-The VM was already running this session. Setup/reboot evidence from Checkpoint
-1 remains in `docs/VERIFICATION.md`; it was not repeated for Checkpoint 2.
-Use `./scripts/dev ./scripts/vcan-up` after reboot. Do not execute Linux build
-outputs or shared `.venv` binaries directly on macOS. Tests clean up their
-simulators/daemons and observers; the VM is intentionally left available.
+Do not run the service/simulator concurrently with tests on the same vcan0.
+Tests create disposable clusters (including a local trust-auth test endpoint),
+never stop the default/user cluster, and clean up their services/processes.
+The default local installation uses Unix peer auth as OS/DB account vigil.
+The installer and default database provisioning were exercised (schema setup
+twice) without enabling the installed service. The VM and default PostgreSQL
+package service remain available. No remote publication.
+
+TSan requires `setarch aarch64 -R` for its test subprocesses on this VM; the
+clean gate applies it. Global ASLR remains enabled. Shared .venv/build outputs
+are Linux files and must not be executed directly on macOS.
 
 ## Observed verification
 
-The final `./scripts/dev ./scripts/check --clean` rebuilt everything after
-review fixes. Both Debug and ASan/UBSan passed all 39 cmocka cases; all six
-Python unit tests passed. Both old decoder integration gates and both new
-real daemon gates passed. No compiler warnings or sanitizer reports.
+The final `./scripts/dev ./scripts/check --clean` exited 0 after all review
+fixes. Debug, ASan/UBSan and TSan passed all 45 cmocka cases; all six Python
+unit tests passed. Both Checkpoint 1/2 real vcan variants passed unchanged
+monitoring expectations. All three builds passed the PostgreSQL/vcan suite,
+including direct SQL assertions, and real systemd tests passed. Helgrind
+reported zero errors on the six queue/health tests. No final sanitizer findings.
 
-- Normal two-pod simulator: exactly 18 frames, 12 usable readings, 6 heartbeats,
-  zero rejects/loss; distinct channel values and stream baselines verified.
-- Repeated simulator: exactly 36 frames, 12 usable readings, 6 heartbeats,
-  18 repeat rejections, zero inferred loss.
-- Stop pod 1 while pod 2 runs: three communication alarms, last-known values
-  stale/current=0, pod 2 current. With timeout 600 ms/tick 20 ms, observed
-  clean-run alarm ages included [606, 606, 606] ms Debug and [617, 617, 617] ms
-  sanitized. The final post-review clean run also passed (sanitized ages
-  [622, 622, 622] ms); every run passed the 600..820 ms scheduling bound.
-  Restart produced 3 recoveries/2 baseline resets, no rejects/inferred loss.
-- Nine malformed frames rejected by exact reason without value/timestamp/alarm
-  changes. Gap accepted with loss=3; repeat/old/range/fault/unknown-pod rejected;
-  threshold oscillation produced one raise and one clear. `cansend` reached
-  the live daemon independently.
-- Ongoing repeated readings stayed stale across more than three timeouts while
-  progressing heartbeats remained fresh. SIGUSR1 snapshots and SIGINT/SIGTERM
-  shutdown passed, including startup failure paths and optimized-Python guard.
-- `/proc` inspection found one CAN socket, one timerfd, one signalfd and no open
-  config file. A deliberately unread 4 KiB diagnostic pipe did not stop CAN
-  processing/timeouts; drops were counted and high alarm state retained.
-  Closing the pipe reader did not cause SIGPIPE termination.
-- Shell syntax and diff whitespace checks passed. Full change review covered
-  scope, ownership, lengths, conversions, clock arithmetic, counter/reset policy,
-  rejected-value immutability, config, alarm lifecycle and documentation claims.
+- Capacity eight/five outage readings: all five backfilled, no drops/gap.
+- Capacity four/eleven outage readings: four newest retained, exactly seven
+  dropped and recorded in one gap. Current high/stale alarms restored; a
+  cooler-reading outage also verified correctly cleared alarm state.
+- Observed outages 2021..2037 ms across the final matrix; communication alarms
+  fired at 511..521 ms with a 500 ms timeout while PostgreSQL was stopped.
+- Table-lock and server-statement timeouts produced SQLSTATE 55P03 and 57014;
+  sensor/timeouts continued and retained records backfilled afterward.
+- Lost real COMMIT response: idempotent retry, exactly five SQL readings and
+  five acknowledged readings. Event overflow: 300 paced readings/capacity four,
+  exactly 296 reading drops; 46/47/46 event drops matched SQL per build.
+- Unresponsive TCP shutdown 1.043/1.052/1.072 s, exactly three abandoned readings.
+  SIGKILL during a known DB outage lost exactly three unsubmitted readings,
+  retained two earlier SQL rows, and started a distinct new run without backfill.
+- systemd UID 999, readiness/watchdog, two restarts (SIGKILL and stopped-main
+  watchdog), clean outage stop in 1.058 s. Installed default peer-auth service
+  then persisted six readings/three heartbeats and stopped with exit 0.
+- Test clusters/temporary units/processes cleaned up. Installed vigild remains
+  disabled/inactive, final binary installed; default PostgreSQL remains online.
+  Smoke history is retained. Global ASLR remains enabled (value 2).
 
-See `docs/CHECKPOINT_2_VERIFICATION.md` for expectations and final results.
+Full expectations, measurements, commands, corrected harness assumptions,
+review fixes and limitations: `docs/CHECKPOINT_3_VERIFICATION.md`.
+Local full final transcript: `artifacts/checkpoint-3-final.log` (ignored).
 
-## Limits and deferred work
+## Limits and exact stopping boundary
 
-No known unresolved Checkpoint 2 defect. Evidence is Ubuntu ARM64/vcan only,
-not physical CAN, high-rate capacity or real-time latency guarantees. CRC and
-8-bit counters cannot authenticate, resolve arbitrary loss/replay or reliably
-identify rapid restarts. Recovery policy and slope re-baselining are explicit
-in `docs/MONITORING.md`. Receive timestamps are userspace processing times;
-backlog can delay them. Kernel overflow reports may lag until the next frame.
+Memory-only buffering, finite event history, at most 32 additional in-flight
+records, one-second best-effort shutdown drain, and possible uncertain COMMIT
+outcomes are explicit. Database row durability depends on PostgreSQL/storage.
+No spool, config reload, cross-process alarm restoration, retention/analytics,
+authenticated CAN, physical bus testing or hard real-time guarantee. Diagnostic
+regular-file output can still block as documented in Checkpoint 2; full pipes
+drop counted lines. CRC/counters cannot authenticate sources; flatness is only
+suspicion. vcan does not model physical arbitration/bitrate/electrical behavior.
 
-Alarms/counters are volatile; stdout is not durable history. Full pipes drop
-counted diagnostics; regular-file writes can still block. No config reload,
-CAN FD/error subscription, PostgreSQL/libpq, persistence thread/queue, systemd
-notify/watchdog service, fuzz target, CI, outage/crash evidence, dashboard,
-API, Modbus, authentication, Buildroot or hardware work was added.
+Checkpoint 3 is ready for the next authorized checkpoint. Identify its local
+checkpoint commit with `git log -1 --oneline`. Do not start Checkpoint 4. Later work requires owner authorization;
+likely evidence work includes the brief's decoder fuzzer, CI and scripted demo,
+not automatically a dashboard/API/Buildroot extension.
 
-## Exact next checkpoint: 3 — persistence, only when authorized
-
-1. Reread the complete brief and current records, inspect Git, rerun the clean
-   Checkpoint 2 gate before changes. Preserve all monitoring semantics/tests.
-2. Add the bounded persistence queue and dedicated writer thread that exclusively
-   owns libpq. Use connect_timeout/statement_timeout. Copy batches under the
-   mutex, release it, then perform I/O. Never put database calls in poll/core.
-3. Keep alarm state owned by monitoring memory. Add distinct queued/written/
-   dropped/outage counters; preserve exact evidence of history loss.
-4. Implement finite buffering, oldest-reading drops when full, persistence-
-   degraded alarm, gap history and current-alarm snapshot upon recovery.
-   Do not claim crash durability for an in-memory queue.
-5. Add deterministic queue tests and real PostgreSQL outage/recovery evidence,
-   update docs/state, review, clean gate and local checkpoint commit.
-
-This checkpoint uses per-command Git identity `Codex <codex@localhost>` as
-Checkpoint 1 did, without changing global settings or publishing. Identify
-its commit with `git log -1 --oneline`.
+Use per-command Git identity `Codex <codex@localhost>` as prior checkpoints did;
+do not change global identity or publish. Identify the final checkpoint commit
+with `git log -1 --oneline`.

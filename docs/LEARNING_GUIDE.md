@@ -1,4 +1,4 @@
-# Understanding Vigil: Checkpoints 1 and 2
+# Understanding Vigil: Checkpoints 1 through 3
 
 ## What exists today
 
@@ -7,7 +7,8 @@ through Linux. The C daemon `vigild` decodes them, checks their freshness,
 progress and physical plausibility, and maintains alarms in memory. A smaller
 decoder diagnostic remains useful for examining literal frames. Start with
 `README.md`, then read `src/protocol.c` alongside `docs/PROTOCOL.md`, followed
-by `src/monitor.c` and `docs/MONITORING.md`. PostgreSQL is not implemented yet.
+by `src/monitor.c` and `docs/MONITORING.md`. Then read `src/queue.c`,
+`src/persistence.c` and `docs/PERSISTENCE.md` for the database handoff.
 
 ## What vcan and SocketCAN mean
 
@@ -217,8 +218,118 @@ signals and a deliberately unread output pipe. Deterministic C tests cover
 exact counter, range, rate, flat-window and timeout boundaries. See
 `docs/CHECKPOINT_2_VERIFICATION.md` for observed results and limits.
 
-## Next: persistence (Checkpoint 3, not started)
+## Why PostgreSQL cannot be called from poll()
 
-Later, PostgreSQL will store history from a dedicated persistence thread.
-Monitoring must not wait for a database call. Memory buffering will be bounded
-and will not survive a crash; it must never be sold as guaranteed durability.
+Imagine a database statement takes five seconds while a sensor's freshness
+limit is three seconds. If the poll loop calls PostgreSQL, it cannot receive
+CAN or check the timerfd during those five seconds. An old value could look
+current while the daemon waits. Putting records in a ring buffer alone does
+not solve that: if the same thread drains the buffer into PostgreSQL, it still
+stops monitoring whenever a database call waits.
+
+The persistence thread is a second execution path. The main thread copies a
+small record to the queue and returns to monitoring. The writer removes a
+batch and talks to PostgreSQL while main continues. The writer even uses
+socket deadlines internally, so a dead connection cannot prevent a bounded
+shutdown. This does not make the main loop a hard real-time system; Linux
+scheduling and diagnostic/filesystem behavior still have limits.
+
+## What the two threads share and why the lock is short
+
+They share the queue's records, queue/statistics counters, shutdown flag,
+condition variable, and a copied latest alarm snapshot. They do **not** share
+the live monitor or libpq connection. Main alone changes live alarms; writer
+alone uses its connection. Record structs own their contents, with no pointer
+to a CAN stack buffer that might be overwritten on the next receive.
+
+A mutex permits only one thread at a time to change shared queue metadata.
+The writer holds it while copying/removing at most 32 records. It releases it
+before formatting the SQL payload or doing any database/network work. If it
+held the mutex while PostgreSQL was slow, main would wait for that mutex to
+enqueue the next reading: the database would have stalled monitoring indirectly.
+The rule is about **lock scope**, not merely having two threads.
+
+The condition variable lets an idle writer sleep until work arrives. The
+predicate is checked while holding the same mutex used by publication, so a
+signal arriving just before the wait is not lost. Failure backoff has a fixed
+monotonic deadline; incoming readings cannot wake it into a reconnect loop.
+Main requests shutdown, writer finishes or reaches its drain deadline, main
+joins writer, and only then destroys the queue and synchronization objects.
+
+## Database history and current alarm truth are different
+
+When a temperature becomes stale, main marks it stale and raises communication
+loss immediately. That remains true even if SQL has no row for it yet. The
+database might show yesterday's cleared alarm, an incomplete outage history,
+or a snapshot from before the most recent frame. Asking it what is currently
+active would therefore give the wrong answer during the very fault we need
+to handle. Vigil's current truth stays in monitoring memory; SQL records what
+was observed and what history could be preserved.
+
+Alarm transitions are queued as events. A separate bounded snapshot contains
+all latest active/cleared states and lifecycle counts. If too many old events
+are lost, the snapshot lets recovery say which alarms were active as of a
+known time without pretending to reconstruct every missing transition.
+
+## Exactly what happens when the database stops and returns
+
+1. A writer operation fails or reaches its deadline. Failure and outage timing
+   counters change. Main sees that state and raises persistence-degraded.
+   Sensors still arrive, counters still advance, and silence still expires.
+2. Accepted readings fill their bounded FIFO. Events have a separate 256-slot
+   reserve, so alarm activity cannot steal reading capacity. A full lane evicts
+   its oldest pending record and counts that loss exactly. Current alarms are
+   never evicted. Even event-history overflow cannot delete a live high alarm.
+3. One submitted batch of at most 32 records is kept immutable outside the
+   pending queue. It might already have committed if its response was lost.
+   Retrying its UUID/batch ID lets PostgreSQL recognize it and avoid duplicate
+   history. This reserve is explicitly included in the documented memory bound.
+4. Retries occur once per second after failure, not once per incoming frame.
+   When PostgreSQL returns, writer retries any uncertain batch and backfills
+   retained records. Lost pending history becomes an explicit gap with separate
+   exact reading/event counts. Recovery also records a current alarm snapshot.
+5. Once the queue, gap counts and alarm revision are caught up, main clears
+   persistence-degraded and queues that transition. A previously stale or high
+   sensor alarm remains active until monitoring gets evidence to clear it.
+
+For a concrete tested example: capacity four, no readings already in flight,
+eleven readings arriving while PostgreSQL is stopped. Seven oldest readings
+are lost and counted; the latest four remain. On recovery SQL contains those
+four, a gap count of seven, and current alarm state. Capacity eight and five
+outage readings produces no loss and all five backfill. Check the actual
+numbers in `docs/CHECKPOINT_3_VERIFICATION.md`, not a claim of unlimited storage.
+
+## What a daemon crash loses, and what a spool would cost
+
+A stopped database does not kill memory. Killing the daemon does. Pending
+readings, queued events, unpublished counters, current alarms and unconfirmed
+batch bookkeeping disappear. New startup gets a new run UUID and unknown
+sensor state; it cannot invent the missing records. In the crash test, two
+readings committed before the outage remain in SQL, and three known queued
+readings disappear. An ambiguous in-flight COMMIT is a different case: SQL
+may contain it even though the process never received confirmation.
+
+An on-disk spool could write records to a local journal before treating them
+as recoverable, replay it on restart, and acknowledge/delete entries only after
+SQL commit. That adds write latency, disk wear, fsync policy, capacity limits,
+corrupt/partial-record handling, ordering, compaction and crash-recovery tests.
+It also needs a policy for full or failed local storage. Simply writing a file
+without considering flushing does not guarantee survival through power loss.
+Vigil does not implement a spool in this checkpoint; the memory limit is honest.
+
+## What systemd and the new evidence prove
+
+The service account is unprivileged. Administrative CAN setup is a separate
+step; the daemon does not need root just because an interface must be created.
+Type=notify readiness announces working monitoring infrastructure, even when
+history is degraded. The main loop sends watchdog notifications; a stopped
+main misses them and systemd restarts it. Database failure alone is not a
+reason to restart and discard the queue.
+
+The tests use the actual Ubuntu PostgreSQL server, Linux vcan and systemd.
+They compare SQL rows and snapshot contents directly, force locks and statement
+timeouts, discard a committed response through a local forwarding fixture,
+and kill a process during a known outage. Address/undefined/thread sanitizers
+and concurrent queue tests check different classes of defects; none proves
+absence of every race or validates physical CAN. GCC TSan requires disabling
+ASLR for its test subprocess tree in this VM, not for the operating system.

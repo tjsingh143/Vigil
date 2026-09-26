@@ -226,7 +226,7 @@ const char *vigil_reject_name(enum vigil_reject reason)
 const char *vigil_alarm_name(enum vigil_alarm_kind kind)
 {
     static const char *const names[] = {"communication_lost", "sequence_anomaly",
-        "measurement_invalid", "flat_suspicion", "high", "pod_not_operational"};
+        "measurement_invalid", "flat_suspicion", "high", "pod_not_operational", "persistence_degraded"};
     return (unsigned)kind < sizeof(names) / sizeof(names[0]) ? names[kind] : "unknown";
 }
 

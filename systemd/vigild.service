@@ -1,0 +1,36 @@
+[Unit]
+Description=Vigil CAN sensor monitoring and PostgreSQL history
+After=network.target postgresql.service
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=vigil
+Group=vigil
+EnvironmentFile=-/etc/vigil/database.env
+ExecStart=/usr/local/bin/vigild --config /etc/vigil/vigil.conf
+WatchdogSec=4s
+Restart=on-failure
+RestartSec=1s
+TimeoutStartSec=5s
+TimeoutStopSec=3s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_CAN AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

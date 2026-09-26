@@ -4,7 +4,7 @@ cd -- "$(dirname -- "$0")/.."
 [[ $(uname -s) == Linux ]] || { echo 'Use ./scripts/dev ./scripts/check' >&2; exit 1; }
 if [[ ${1:-} == --clean ]]; then
     # Fixed repository-local output directories only.
-    rm -rf -- build build-sanitize
+    rm -rf -- build build-sanitize build-tsan
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check [--clean]' >&2; exit 1
 fi
@@ -22,3 +22,16 @@ ctest --test-dir build-sanitize --output-on-failure
 .venv/bin/python tests/integration.py --decoder build-sanitize/vigil-decode
 .venv/bin/python tests/monitor_integration.py --daemon build/vigild
 .venv/bin/python tests/monitor_integration.py --daemon build-sanitize/vigild
+
+.venv/bin/python tests/persistence_integration.py --daemon build/vigild --systemd
+.venv/bin/python tests/persistence_integration.py --daemon build-sanitize/vigild
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DVIGIL_TSAN=ON
+cmake --build build-tsan --parallel 2
+export TSAN_OPTIONS=halt_on_error=1
+# GCC TSan on this ARM64 Ubuntu kernel needs a compatible address layout.
+# Disable ASLR for this subprocess tree only, never change global VM settings.
+setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
+setarch "$(uname -m)" -R .venv/bin/python tests/persistence_integration.py --daemon build-tsan/vigild
+valgrind --tool=helgrind --error-exitcode=99 --fair-sched=yes build/test_queue
+bash -n scripts/dev scripts/setup-linux scripts/vcan-up scripts/check scripts/install-service scripts/setup-database
+git diff --check

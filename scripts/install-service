@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux ]] || { echo 'Use scripts/dev scripts/install-service' >&2; exit 1; }
+[[ -x build/vigild ]] || { echo 'Build vigild first.' >&2; exit 1; }
+id vigil >/dev/null 2>&1 || sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin vigil
+sudo install -m 0755 build/vigild /usr/local/bin/vigild
+sudo install -d -m 0755 /etc/vigil
+# Preserve owner configuration on subsequent installations.
+[[ -e /etc/vigil/vigil.conf ]] || sudo install -m 0644 config/vigil.conf /etc/vigil/vigil.conf
+[[ -e /etc/vigil/database.env ]] || sudo install -m 0644 config/database.env /etc/vigil/database.env
+sudo install -m 0644 systemd/vigild.service /etc/systemd/system/vigild.service
+sudo systemctl daemon-reload
+echo 'Installed. Provision history with scripts/setup-database; set up CAN separately.'
+echo 'Start/enable explicitly: sudo systemctl enable --now vigild'

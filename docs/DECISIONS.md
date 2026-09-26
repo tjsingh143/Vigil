@@ -178,3 +178,93 @@ Checkpoint 3 is the next core work: persistence thread, bounded queue,
 PostgreSQL history and outage behavior. It must own libpq/database calls,
 never hold queue locks across I/O, and treat monitoring memory as current
 alarm authority. None of those persistence features are implemented here.
+
+## Checkpoint 3 — persistence and service (2026-09-25/26)
+
+The owner authorized full implementation, real outage evidence, documentation
+and a local commit. One Codex agent performed the work; no delegation or other
+Codex instance. Before code changes, all eight pages of version 3, AGENTS.md,
+state, decisions and learning guide were reread. Clean starting commit was
+`aa785cb`; the entire clean Checkpoint 2 gate and a short vcan/simulator smoke
+passed. The existing section-7 process deviation (agent implementation in
+place of owner-first coding) remains explicit.
+
+Main owns all current alarms, including persistence-degraded. The writer owns
+libpq. Shared data is copied by value under a mutex. Queue locks never cover
+JSON serialization, diagnostics, PostgreSQL or network I/O. Condition waits
+recheck predicates under that same mutex to avoid losing a publication wakeup.
+Signals are blocked before creating the writer; shutdown joins it before
+restoring masks/destructing the queue. The monitor core and wire protocol are
+unchanged apart from naming the added daemon-level alarm category.
+
+Accepted readings and events have independent FIFO reserves. The configurable
+reading lane defaults to 1024; the fixed event lane has 256 slots. Full lanes
+evict their oldest pending records, with separate exact counters. Keeping an
+event reserve avoids alarm chatter stealing reading capacity. Event overflow
+is explicitly possible and counted; current alarm snapshots remain separately
+bounded and recover the latest state, not every lost historical transition.
+
+Two necessary brief refinements are explicit in [PERSISTENCE.md](PERSISTENCE.md):
+
+- The writer retains one immutable submitted batch of at most 32 records
+  **in addition to** the pending reading/event queue capacities. A submitted
+  transaction may have committed despite a lost response; treating it as an
+  evictable pending record would misreport data loss. The exact bound is
+  N+256+32 outstanding records, plus fixed snapshot/serialization storage.
+  Drop-oldest applies to pending, unsubmitted records. Status distinguishes
+  pending capacity from the in-flight count. At a settled outage without
+  readings in flight, N+K arrivals retain exactly N and lose exactly K.
+- Instead of unbounded blocking libpq waits inside the writer, asynchronous
+  libpq calls have a two-second client deadline and 50 ms shutdown checks.
+  `connect_timeout=2` is supplied and its intent implemented explicitly because
+  PQconnectPoll ignores that parameter. Server statement/lock timeouts are
+  1000/500 ms. Numeric/Unix endpoints prevent hostname lookup from bypassing
+  the connection bound. No PostgreSQL calls move into the main poll loop.
+
+Schema v1 has run identities, typed history metadata with small JSON detail,
+and atomic batch checkpoints with gaps/health/alarm snapshots. A reproducible
+SQL initialization script and provisioning grants keep DDL with the database
+owner. `write_batch` is an invoker function, not a privileged service. UUID and
+batch IDs make retries idempotent; the exact original payload survives retry.
+Records-written counts confirmed history records, not internal checkpoint rows.
+UTC timestamps support external history; monotonic timestamps remain the only
+basis for freshness, outage duration and retry/drain deadlines.
+
+Persistence-degraded also raises during connection/query failure and initial
+unconnected startup, not only when overflow first loses data. This stronger
+warning is useful before loss. Every newly observed drop raises it even if writer acknowledgement won the
+scheduling race. It clears after backlog, drop counts and the
+published alarm revision are acknowledged. Monitoring never reads SQL to
+restore current state. Recovery/gap snapshots include cleared and active
+alarms and lifecycle counters; a new process starts unknown with a new UUID.
+
+Shutdown has a one-second best-effort drain budget and reports any abandoned
+memory. No spool, crash recovery, invented previous-run loss count, or claim
+that a memory queue is durable. A lost response can leave unconfirmed rows
+already committed; SQL contents settle what survived. The killed-outage test
+uses a known stopped database and no readings in flight to make its exact
+three-record loss unambiguous.
+
+systemd is implemented with libsystemd sd_notify/sd_watchdog_enabled. Readiness
+means monitoring is ready, independent of database availability. Watchdog is
+fed only by the main loop. User/group vigil has no capabilities; CAN setup is
+separate. The service orders after PostgreSQL but is not coupled to its liveness.
+Read-only system/home/kernel protections and private devices/tmp are retained
+in the actual service tests. Installers preserve owner configuration and do not
+enable/start the service implicitly. No automatic physical network setup.
+
+PostgreSQL 16.15 and systemd 255 in the actual Ubuntu ARM64 VM were used. Tests
+create their own clusters, restricted runtime roles and temporary services.
+PostgreSQL's fsync and synchronous_commit remain enabled. A local TCP forwarding
+fixture drops an actual committed response; it does not replace PostgreSQL.
+The tests inspect SQL values, exact gap counts and latest complete alarm state.
+
+GCC 13 TSan initially aborted before tests with unexpected memory mapping.
+`setarch aarch64 -R` fixes its address layout for the test subprocess tree;
+no global kernel/ASLR setting changed. TSan unit and real persistence gates
+therefore run, in addition to ASan/UBSan and Helgrind concurrent queue checks.
+System libraries are not rebuilt with sanitizer instrumentation; this remains
+finite dynamic evidence. See [checkpoint evidence](CHECKPOINT_3_VERIFICATION.md).
+
+Checkpoint 4 is not started. Fuzzing/CI, a demonstration bundle, extended load
+characterization, Buildroot and all deferred products remain outside this work.

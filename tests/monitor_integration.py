@@ -62,11 +62,12 @@ def progress(snap, pod, channel):
 
 
 class Daemon:
-    def __init__(self, executable, config):
+    def __init__(self, executable, config, persistence=False, extra_args=(), env=None):
         self.config = tempfile.NamedTemporaryFile(mode="w", prefix="vigil-live-", suffix=".conf")
         self.config.write(config)
         self.config.flush()
-        self.child = subprocess.Popen([executable, "--config", self.config.name], cwd=ROOT,
+        self.child = subprocess.Popen([executable, "--config", self.config.name,
+                                      *([] if persistence else ["--no-persistence"]), *extra_args], cwd=ROOT, env=env,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.buffer = b""
         self.pending = None
@@ -79,7 +80,8 @@ class Daemon:
             targets = [os.readlink(path) for path in Path(f"/proc/{self.child.pid}/fd").iterdir()]
             assert targets.count("anon_inode:[signalfd]") == 1, targets
             assert targets.count("anon_inode:[timerfd]") == 1, targets
-            assert sum(target.startswith("socket:") for target in targets) == 1, targets
+            if not persistence:
+                assert sum(target.startswith("socket:") for target in targets) == 1, targets
             assert self.config.name not in targets, targets  # config closed before ready
         except BaseException:
             self.close()
@@ -353,7 +355,7 @@ def diagnostic_backpressure(executable):
     with tempfile.NamedTemporaryFile(mode="w", prefix="vigil-pressure-") as config:
         config.write(config_text(pods=(1,), timeout=200, status=20))
         config.flush()
-        child = subprocess.Popen([executable, "--config", config.name], cwd=ROOT,
+        child = subprocess.Popen([executable, "--config", config.name, "--no-persistence"], cwd=ROOT,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=4096)
         try:
             assert select.select([child.stderr], [], [], 5)[0]
