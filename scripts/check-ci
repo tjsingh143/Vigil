@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Hosted-runner subset. Intentionally does not create vcan or start a systemd unit.
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 1; }
+if [[ ${1:-} == --clean && $# == 1 ]]; then
+    rm -rf -- build-ci build-ci-sanitize build-analyze build-fuzz
+elif [[ $# != 0 ]]; then
+    echo 'usage: scripts/check-ci [--clean]' >&2; exit 2
+fi
+printf 'EXPECT: strict GCC/Clang builds; 45 C cases per build; six Python cases; CLI and five real PostgreSQL contracts; no sanitizer/analyzer findings; fuzz smoke.\n'
+cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc
+cmake --build build-ci --parallel 2
+ctest --test-dir build-ci -V
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+.venv/bin/python -c 'import sys; sys.path.insert(0,"tests"); from integration import cli_proof; cli_proof("build-ci/vigil-decode")'
+.venv/bin/python tests/database_contract.py
+cmake -S . -B build-ci-sanitize -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DVIGIL_SANITIZERS=ON
+cmake --build build-ci-sanitize --parallel 2
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+ctest --test-dir build-ci-sanitize -V
+.venv/bin/python -c 'import sys; sys.path.insert(0,"tests"); from integration import cli_proof; cli_proof("build-ci-sanitize/vigil-decode")'
+printf 'EXPECT: GCC -fanalyzer production build reports zero unsuppressed findings.\n'
+cmake -S . -B build-analyze -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DCMAKE_C_FLAGS=-fanalyzer -DBUILD_TESTING=OFF
+cmake --build build-analyze --parallel 2
+./scripts/fuzz 10
+for script in scripts/*; do bash -n "$script"; done
+git diff --check

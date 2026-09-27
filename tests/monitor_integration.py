@@ -63,7 +63,7 @@ def progress(snap, pod, channel):
 
 class Daemon:
     def __init__(self, executable, config, persistence=False, extra_args=(), env=None):
-        self.config = tempfile.NamedTemporaryFile(mode="w", prefix="vigil-live-", suffix=".conf")
+        self.config = tempfile.NamedTemporaryFile(mode="w+", prefix="vigil-live-", suffix=".conf")
         self.config.write(config)
         self.config.flush()
         self.child = subprocess.Popen([executable, "--config", self.config.name,
@@ -73,9 +73,13 @@ class Daemon:
         self.pending = None
         self.snapshots = []
         self.events = []
+        self.transcript = bytearray()
+        self.errors = bytearray()
+        self.allow_rx_overflow = False
         try:
             assert select.select([self.child.stderr], [], [], 5)[0], "daemon readiness timeout"
             line = self.child.stderr.readline()
+            self.errors.extend(line)
             assert line.startswith(b"ready "), line
             targets = [os.readlink(path) for path in Path(f"/proc/{self.child.pid}/fd").iterdir()]
             assert targets.count("anon_inode:[signalfd]") == 1, targets
@@ -96,6 +100,7 @@ class Daemon:
             assert self.child.poll() in (None, 0), self.child.stderr.read().decode()
             return
         self.buffer += data
+        self.transcript.extend(data)
         while b"\n" in self.buffer:
             line, self.buffer = self.buffer.split(b"\n", 1)
             row = parse(line.decode())
@@ -119,7 +124,7 @@ class Daemon:
                     assert snap["frames"] == snap["valid_readings"] + snap["heartbeats"] + snap["rejected"]
                     assert snap["rejected"] == sum(row["count"] for row in snap["rows"]
                                                    if row["event"] == "reject_count")
-                    assert snap["rx_overflow"] == 0
+                    assert self.allow_rx_overflow or snap["rx_overflow"] == 0
                     return snap
             checked = len(self.snapshots)
             self.pump(min(0.1, max(0, deadline - time.monotonic())))
@@ -133,6 +138,7 @@ class Daemon:
         assert self.child.wait(timeout=0.1) == 0
         self.pump(0)
         stderr = self.child.stderr.read().decode()
+        self.errors.extend(stderr.encode())
         assert not stderr, stderr  # includes any sanitizer report
         assert any(row["event"] == "stopped" for row in self.events)
 
@@ -144,6 +150,15 @@ class Daemon:
             except subprocess.TimeoutExpired:
                 self.child.kill()
                 self.child.wait(timeout=2)
+        self.transcript.extend(self.child.stdout.read())
+        self.errors.extend(self.child.stderr.read())
+        directory = os.environ.get("VIGIL_EVIDENCE_DIR")
+        if directory:
+            prefix = Path(directory) / f"daemon-{self.child.pid}"
+            prefix.with_suffix(".stdout").write_bytes(self.transcript)
+            prefix.with_suffix(".stderr").write_bytes(self.errors)
+            self.config.seek(0)
+            prefix.with_suffix(".conf").write_text(self.config.read())
         self.child.stdout.close()
         self.child.stderr.close()
         self.config.close()
@@ -159,18 +174,25 @@ def daemon(executable, config):
 
 
 @contextmanager
-def simulator(pod):
+def simulator(pod, observer=None):
     child = subprocess.Popen([sys.executable, "-m", "simulator.pod", "--pod-id", str(pod),
                               "--interval", "0.05"], cwd=ROOT,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert select.select([child.stdout], [], [], 5)[0]
+        deadline = time.monotonic() + 5
+        while not select.select([child.stdout], [], [], 0.02)[0]:
+            assert time.monotonic() < deadline, "simulator readiness timeout"
+            if observer is not None:
+                observer.pump(0)
         assert child.stdout.readline().startswith(b"ready ")
         yield child
     finally:
         if child.poll() is None:
             child.terminate()
         try:
+            deadline = time.monotonic() + 2
+            while child.poll() is None and observer is not None and time.monotonic() < deadline:
+                observer.pump(0.02)
             out, err = child.communicate(timeout=2)
         except subprocess.TimeoutExpired:
             child.kill()
@@ -194,13 +216,27 @@ def send(raw, frame):
 
 def finite_simulator(executable, repeated=False):
     """Two pods x three cycles: 12 readings + 6 heartbeats; repeats add 18 rejections."""
-    with daemon(executable, config_text(timeout=1200)) as d:
+    # Count/transport evidence must not depend on receive-time slope estimates
+    # when the scheduler delivers several queued cycles in one poll turn.
+    with daemon(executable, config_text(timeout=1200, rate=0)) as d:
         args = [sys.executable, "-m", "simulator.pod", "--pod-id", "1", "--pod-id", "2",
                 "--cycles", "3", "--interval", "0.05"]
         if repeated:
             args.append("--repeat-each-frame")
-        sim = subprocess.run(args, capture_output=True, timeout=5, cwd=ROOT)
-        assert sim.returncode == 0, sim.stderr
+        sim = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT)
+        try:
+            deadline = time.monotonic() + 5
+            while sim.poll() is None:
+                assert time.monotonic() < deadline, "finite simulator deadline"
+                d.pump(0.02)
+            _, errors = sim.communicate(timeout=1)
+            assert sim.returncode == 0, errors
+        finally:
+            if sim.poll() is None:
+                sim.kill()
+                sim.wait(timeout=2)
+            sim.stdout.close()
+            sim.stderr.close()
         expected = 36 if repeated else 18
         snap = d.wait(lambda s: s["frames"] >= expected)
         assert snap["frames"] == expected, snap
@@ -221,33 +257,42 @@ def finite_simulator(executable, repeated=False):
 
 def silence_restart(executable):
     """Stopping pod 1 stales its two channels + heartbeat, while pod 2 stays fresh."""
-    with daemon(executable, config_text()) as d, simulator(2):
-        with simulator(1):
-            d.wait(lambda s: all(source(s, p, c)["accepted"] >= 3
-                                 for p in (1, 2) for c in (0, 1)))
-        stale = d.wait(lambda s: all(source(s, 1, c)["freshness"] == "stale" for c in (0, 1))
+    # Rate boundaries have deterministic clock-driven C tests; this case isolates
+    # freshness/recovery from receive-time batching after VM scheduling stalls.
+    with daemon(executable, config_text(rate=0)) as d, simulator(2, d):
+        with simulator(1, d):
+            healthy = d.wait(lambda s: all(source(s, p, c)["accepted"] >= 3
+                                 and source(s, p, c)["current"] == 1
+                                 for p in (1, 2) for c in (0, 1))
+                                 and all(pod_status(s, p)["heartbeat"] == "fresh" for p in (1, 2)))
+        stale = d.wait(lambda s: s["now_ms"] > healthy["now_ms"]
+                       and all(source(s, 1, c)["freshness"] == "stale" for c in (0, 1))
                        and pod_status(s, 1)["heartbeat"] == "stale")
         for c in (0, 1):
             assert source(stale, 1, c)["current"] == 0
             assert source(stale, 2, c)["current"] == 1
         assert pod_status(stale, 2)["heartbeat"] == "fresh"
-        assert stale["stale_events"] == 3
+        # Interpreter/process startup may exceed a freshness interval on a VM.
+        # Measure this fault from the observed healthy state, not process birth.
+        assert stale["stale_events"] - healthy["stale_events"] == 3, (healthy, stale)
         ages = []
         for c in (-1, 0, 1):
             event = next(e for e in d.events if e["event"] == "alarm"
                          and e["kind"] == "communication_lost" and e["state"] == "active"
-                         and e["pod"] == 1 and e["channel"] == c)
+                         and e["pod"] == 1 and e["channel"] == c
+                         and e["now_ms"] > healthy["now_ms"])
             last = (pod_status(stale, 1)["last_heartbeat_ms"] if c == -1
                     else source(stale, 1, c)["last_valid_ms"])
             age = event["now_ms"] - last
             assert 600 <= age <= 820, age  # 20 ms tick + 200 ms VM scheduling allowance
             ages.append(age)
-        with simulator(1):
-            recovered = d.wait(lambda s: s["recoveries"] == 3 and
+        with simulator(1, d):
+            recovered = d.wait(lambda s: s["now_ms"] > stale["now_ms"]
+                               and s["recoveries"] - healthy["recoveries"] == 3 and
                                all(source(s, 1, c)["current"] == 1 for c in (0, 1)))
-            assert recovered["counter_resets"] == 2
-            assert recovered["rejected"] == 0
-            assert recovered["loss"] == 0
+            assert recovered["counter_resets"] - healthy["counter_resets"] == 2
+            assert recovered["rejected"] == 0, recovered
+            assert recovered["loss"] == 0, recovered
         d.stop(signal.SIGINT)
     print(f"PASS pod 1 stop/restart; pod 2 remained fresh; communication alarm ages={ages} ms; "
           "3 recoveries, 2 counter resets, no rejection/loss")

@@ -97,6 +97,15 @@ resolve arbitrary replay/restart/loss; CRC and counters do not authenticate.
 
 ## Plausibility and alarm lifecycle
 
+Rate uses daemon receive/processing time, not a timestamp supplied by the sensor.
+A scheduling stall can deliver several queued readings together and create an
+apparent rate spike, including differing values at the same millisecond. These
+may be rejected even if the source emitted them at a physically reasonable
+rate. This is a known limitation of the current arrival-time policy. Transport,
+count and silence fixtures disable rate checking to isolate their assertions;
+deterministic C tests still check exact rate behavior. A future timestamp-aware
+policy would require separate design and evidence, not an undocumented relaxation.
+
 Status-fault, range and rate failures retain the last usable value/time,
 record the latest validity reason and raise `measurement_invalid`.
 `freshness=fresh validity=range current=0` means the old value is recent but

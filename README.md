@@ -1,195 +1,187 @@
 # Vigil
 
-Vigil detects stale or invalid sensor data and keeps monitoring through database
-outages. **Checkpoint 3 is implemented:** Linux C monitoring, simulated CAN pods,
-in-memory alarms, a bounded queue and dedicated PostgreSQL writer, explicit
-history gaps, and an unprivileged systemd notify/watchdog service. Current
-alarms belong to monitoring memory; PostgreSQL stores history. The queue is
-volatile and cannot preserve unpersisted data through a daemon crash.
+Vigil is a Linux sensor-monitoring daemon in C. It distinguishes stale data,
+non-advancing publishers and implausible measurements, maintains alarms in memory,
+and records history in PostgreSQL without making monitoring wait for the database.
+It exists to make failures observable and testable: what stopped, when it was
+detected, what history survived, and exactly what was lost.
 
-`PROJECT_BRIEF.pdf` version 3 is the specification. This is an original small
-protocol inspired by sensor-pod monitoring, not an implementation of A-Link.
+The complete core and Checkpoint 4 evidence implement `PROJECT_BRIEF.pdf` v3.
+This is an original small protocol and engineering exercise. It does not reproduce
+Schneider NetBotz or A-Link. Actual runs and qualifications: [verification](docs/VERIFICATION.md).
 
-## Start development
+## Architecture
 
-On an Apple Silicon Mac with Homebrew:
+```text
+Python pods → Linux SocketCAN/vcan → main C poll loop (CAN + timerfd + signalfd)
+                                    │ decode; freshness/progress/plausibility
+                                    │ in-memory alarms; readable diagnostics
+                                    ▼ copy records under a short mutex
+                              bounded queue + alarm snapshot
+                                    ▼ persistence pthread, sole libpq owner
+                                PostgreSQL history
+```
+
+Main owns current alarms. SQL is history, not the authority for live state.
+The writer copies a batch, releases the mutex, then performs I/O with bounded
+connection/query deadlines. `systemd` runs the daemon unprivileged with readiness,
+watchdog and failure restart. [Monitoring](docs/MONITORING.md) and
+[persistence](docs/PERSISTENCE.md) define the exact contracts.
+
+## Protocol
+
+Classic CAN, standard 11-bit IDs; pod IDs 1–127; two channels: temperature and door.
+
+| ID | Payload |
+| --- | --- |
+| `0x100 + pod` | 6 bytes: channel, little-endian int16 value, status, rolling counter, CRC-8 |
+| `0x700 + pod` | 7 bytes: state, little-endian uint32 uptime, independent counter, CRC-8 |
+
+Temperature uses 0.01 °C; door is 0/1. CRC-8/SMBUS covers payload bytes before
+the CRC. Repeated/old counters are rejected; small forward gaps infer missing
+frames while accepting usable data. Exact lengths, validation order, counter
+ambiguity and shared C/Python fixtures: [wire protocol](docs/PROTOCOL.md).
+
+## Linux setup and build
+
+SocketCAN, vcan, timerfd, signalfd and systemd require **real Linux**.
+On Apple Silicon macOS, use the repository's Ubuntu 24.04 ARM64 Lima VM:
 
 ```sh
 brew install lima
 ./scripts/dev up
-./scripts/dev ./scripts/check --clean
+./scripts/dev ./scripts/verify --clean
 ```
 
-`up` creates/starts a dedicated VM named `vigil`: Ubuntu 24.04 ARM64, 2 CPUs,
-2 GiB RAM, 12 GiB sparse disk. It shares **only this repository** read/write,
-installs the C/Python development dependencies, creates a Linux `.venv`, and
-brings up `vcan0`. Initial setup needs network access and several minutes.
-The image is pinned by dated URL and SHA-256. Ubuntu package security updates
-remain enabled; this is reproducible setup, not a bit-identical OS snapshot.
+The VM has 2 CPUs, 2 GiB RAM and a 12 GiB sparse disk; only this repository is
+mounted read/write. Setup installs CMake, GCC, Clang/libFuzzer, cmocka, libpq,
+PostgreSQL, libsystemd, Valgrind, can-utils and pinned Python dependencies.
+The Ubuntu image is pinned; package security updates remain enabled.
+Prefix Linux commands below with `./scripts/dev` from macOS, or use
+`./scripts/dev` to open a shell. Shared `.venv`/build outputs are Linux files.
+After reboot: `./scripts/dev ./scripts/vcan-up`. Stop VM: `limactl stop vigil`.
+Mount relocation is documented in [decisions](docs/DECISIONS.md).
 
-`./scripts/dev` opens a Linux shell in the repository. Prefix any Linux command
-with `./scripts/dev` from macOS. The shared `.venv` and build outputs are Linux
-files; do not use them with macOS Python or tools. Lima must remain in a user
-session (no root invocation). The VM is intentionally left running after checks.
-
-On native Ubuntu 24.04, run `./scripts/setup-linux`, then `./scripts/check --clean`.
-Setup uses sudo only for package installation and interface administration.
-Simulator and decoder run as the normal user. Setup now installs PostgreSQL,
-libpq, libsystemd and Valgrind too. Database integration uses disposable clusters
-and does not stop the default PostgreSQL cluster or any user database.
-
-After a VM reboot, run `./scripts/dev ./scripts/vcan-up` (or `./scripts/dev up`).
-Stop the VM with `limactl stop vigil`; start it again with `./scripts/dev up`.
-If the repository moves, its Lima mount needs updating while the VM is stopped;
-see [environment decisions](docs/DECISIONS.md). Do not delete an existing VM
-with valuable files to repair a mount.
-
-## Run the simulator and observe it
-
-Use separate terminals, starting observers before the finite simulator:
-
-```sh
-# Terminal 1: independent can-utils observer (Ctrl-C to stop)
-./scripts/dev candump -L vcan0
-
-# Terminal 2: C diagnostic decoder, 18 frames, 10-second overall deadline
-./scripts/dev build/vigil-decode --listen vcan0 18
-
-# Terminal 3: two pods, three cycles, six messages each cycle
-./scripts/dev .venv/bin/python -m simulator.pod \
-  --pod-id 1 --pod-id 2 --interval 0.1 --cycles 3
-```
-
-Omit `--cycles` for continuous operation; SIGINT/SIGTERM shut it down cleanly.
-Default: pod 1, one cycle/second. Each cycle emits temperature, door, heartbeat
-for each configured pod. Values follow a deterministic pattern. Heartbeat
-uptime measures actual monotonic elapsed seconds.
-
-Add `--repeat-each-frame` to transmit each frame twice for deliberate counter
-fault injection. Counters still advance normally between original frames;
-the daemon rejects and counts each immediate repeat.
-
-## Run the monitoring daemon
-
-```sh
-# Terminal 1: foreground daemon, default pod 1, 3-second freshness timeouts
-./scripts/dev build/vigild --no-persistence
-
-# Terminal 2: default pod 1; Ctrl-C stops it and demonstrates communication loss
-./scripts/dev .venv/bin/python -m simulator.pod
-```
-
-The daemon emits alarm transitions and periodic readable status snapshots.
-Stopping the pod makes its two readings and heartbeat stale; old values remain
-visible with `current=0`. Restarting after the timeout recovers fresh values
-and clears communication alarms. Stop the daemon with Ctrl-C. To request an
-extra snapshot, send SIGUSR1 to the Linux PID printed in its readiness line
-(`./scripts/dev kill -USR1 1234`, replacing 1234 with that PID).
-
-Use `--config config/vigil.conf` for explicit settings. Its comments show how
-to enable pod 2 before starting a two-pod simulator. Default temperature
-alarms raise at 27 C and clear at 26 C; door alarms raise on open and clear on
-closed. Ranges, rates, flatness windows and timeouts are per source.
-[Monitoring contract](docs/MONITORING.md) explains configuration, alarm
-lifecycle, reset policy, timestamps, counters and diagnostic output limits.
-
-`vigild` exits 0 after SIGINT/SIGTERM and 2 on usage/setup/I/O failure. It runs
-in the foreground as an unprivileged user. The example above explicitly disables
-history for a quick monitoring-only demonstration. By default persistence is
-enabled; an unavailable/unconfigured database raises persistence-degraded while
-monitoring continues. For the complete local installation:
-
-```sh
-./scripts/dev ./scripts/install-service
-./scripts/dev ./scripts/setup-database
-./scripts/dev ./scripts/vcan-up
-./scripts/dev sudo systemctl enable --now vigild
-./scripts/dev journalctl -u vigild
-```
-
-Installation preserves existing configuration and runs the service as `vigil`;
-the default local database uses peer authentication for that account. CAN setup
-is a separate privileged step. `config/database.env` shows connection settings;
-`--queue-capacity N` changes the default 1024 pending-reading capacity.
-[Persistence contract](docs/PERSISTENCE.md) explains schema, exact counters,
-oldest-reading drops, the separate event reserve/in-flight batch, deadlines,
-gap markers, crash limits and service operation. Stop the installed service
-before running the isolated regression suite on the same `vcan0`.
-
-Decode a literal frame without a CAN interface:
-
-```sh
-./scripts/dev build/vigil-decode 101 0098080000b7
-# result=ok, pod=1, temperature channel=0, value=2200 (22.00 C), counter=0
-```
-
-The probe prints JSON lines; exit 0 means all decoded frames passed, 1 means
-at least one protocol rejection, 2 means usage/I/O/timeout error. It is a
-bounded diagnostic tool, not `vigild`. It does not apply counter state,
-freshness, physical limits or alarms. Live sockets accept classic CAN only;
-FD and error frames are not subscribed to. The pure decoder explicitly rejects
-FD/error/RTR/extended formats when supplied, and live RTR/EFF are tested.
-
-## Build and test
-
-The complete local gate requires an otherwise idle `vcan0`:
-
-```sh
-./scripts/dev ./scripts/check --clean
-```
-
-It clean-builds strict Debug, ASan/UBSan and TSan variants, runs 45 cmocka cases
-per build and six Python tests, then real decoder/monitor/persistence integration.
-Checkpoint 1/2 gates retain their original checks. PostgreSQL gates inspect SQL
-directly for normal writes, outage/backfill, exact overflow, lost responses,
-current alarms, timeouts and crash loss. A real systemd service proves readiness,
-unprivileged operation, watchdog and SIGKILL restarts. The gate needs sudo for
-vcan and test-service setup; test DBs run as the invoking user in disposable
-clusters. No integration is silently skipped.
-
-GCC TSan on this ARM64 VM needs ASLR disabled **only for its test process tree**
-using `setarch -R`; the script does this without changing global settings. It
-also runs Helgrind on the concurrent queue tests. Evidence:
-[Checkpoint 1](docs/VERIFICATION.md), [Checkpoint 2](docs/CHECKPOINT_2_VERIFICATION.md),
-[Checkpoint 3](docs/CHECKPOINT_3_VERIFICATION.md).
-
-Individual commands inside Linux:
+On native Ubuntu 24.04, run `./scripts/setup-linux`. For an individual build:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
-.venv/bin/python tests/integration.py --decoder build/vigil-decode
-.venv/bin/python tests/monitor_integration.py --daemon build/vigild
 ```
 
-Use `-DVIGIL_SANITIZERS=ON` in a separate build directory for sanitizers.
-The C build requires cmocka, libpq, pthreads and libsystemd; the integration
-harness uses Python's standard library plus the existing python-can simulator.
-CI and the brief's libFuzzer evidence target are deferred to a later evidence
-checkpoint. Real bus integration currently runs locally in this Ubuntu VM.
+## Run pods and daemon
 
-## Map
+In two Linux terminals:
 
-| Path | Purpose |
+```sh
+# Terminal 1: explicit monitoring-only mode
+build/vigild --no-persistence --config config/vigil.conf
+# Terminal 2: pod 1, temperature + door + heartbeat
+.venv/bin/python -m simulator.pod
+```
+
+Ctrl-C stops the simulator. At the default 3000 ms freshness deadline, each
+source becomes stale, its old value has `current=0`, and communication loss
+is raised on the next timer check (default 100 ms tick, plus scheduling delay).
+Restart after silence to recover. Temperature high raises at 27 °C and clears
+at 26 °C. Flat readings raise suspicion only. SIGUSR1 requests a daemon snapshot;
+SIGINT/SIGTERM cleanly stop it. Diagnostics use Linux monotonic milliseconds.
+
+Simulator options include `--pod-id 1 --pod-id 2`, `--cycles 3`, `--interval 0.1`
+and `--repeat-each-frame`. Configure pod 2 in `config/vigil.conf` before monitoring
+it. Deterministic frame injection, silence, threshold sequences and load controls
+live in the scenario harness; they use real SocketCAN.
+
+```sh
+candump -L vcan0
+build/vigil-decode 101 0098080000b7  # value=2200, counter=0
+```
+
+## PostgreSQL and supervised operation
+
+Persistence is enabled by default. An unavailable database raises degraded state
+while monitoring continues. Provision the default local peer-authenticated service:
+
+```sh
+./scripts/install-service
+./scripts/setup-database
+./scripts/vcan-up
+sudo systemctl enable --now vigild
+journalctl -u vigild
+```
+
+The installer preserves existing configuration; it does not implicitly start the
+service. `config/database.env` documents connection settings. Numeric/Unix endpoints
+keep connection deadlines bounded. Schema: `migrations/001_history.sql`.
+`--queue-capacity N` sets pending reading capacity (default 1024).
+[Persistence documentation](docs/PERSISTENCE.md) includes grants, SQL inspection,
+record semantics, timeouts and shutdown behavior.
+
+## Tests, evidence and interview demo
+
+Use an otherwise idle `vcan0`; stop the installed service and other simulators
+before tests. Test clusters are disposable and never stop the default/user
+PostgreSQL cluster. The systemd gate installs/removes its own temporary unit.
+Sudo is needed for network and unit setup; the daemon remains unprivileged.
+
+```sh
+./scripts/verify --clean        # complete gate; writes observed docs/VERIFICATION.md
+./scripts/check --clean         # C/Python, vcan, PostgreSQL, systemd, sanitizers, Helgrind
+./scripts/check-ci --clean      # exact hosted-CI command suite, no vcan/systemd dependency
+.venv/bin/python tests/fault_scenarios.py --output artifacts/my-fault-run
+.venv/bin/python tests/database_contract.py
+./scripts/fuzz 120              # libFuzzer + ASan + UBSan; saved corpus/log/crash artifacts
+./scripts/demo                 # asserted, narrated interview story with disposable DB
+```
+
+Each scenario prints its expectation before execution. Failure exits nonzero;
+JSON results, daemon configuration/output, timestamps and counters are retained
+in new directories under `artifacts/`. Do not reuse an output directory.
+`--scenario NAME` runs one fault case. The demo exports SQL history/checkpoints,
+showing healthy → silent/stale → return → database outage → queue drops → backfill
+and gap. [Manual CAN checklist](docs/MANUAL_CAN.md) supplements automation.
+
+The complete gate includes 45 cmocka cases, six Python unit cases, ten fault
+cases, decoder/daemon integration, SQL assertions, systemd SIGKILL/watchdog
+restart, GCC/Clang strict diagnostics, GCC static analysis, ASan/UBSan, TSan,
+Helgrind and a 120-second fuzz budget. TSan uses `setarch -R` for its process tree
+on the ARM64 VM; global ASLR is unchanged. [Fuzzer contract](fuzz/README.md).
+
+| Evidence boundary | What it checks |
 | --- | --- |
-| `include/vigil/`, `src/` | C protocol, monitoring core, startup config and Linux daemon |
-| `config/` | Example daemon settings matching built-in defaults |
-| `tools/` | Linux C decoder diagnostic |
-| `simulator/` | Python encoder, deterministic pods, pinned dependencies |
-| `tests/` | cmocka, Python, shared literal vectors, Linux integration |
-| `env/`, `scripts/` | Reproducible Ubuntu VM, setup and verification |
-| `docs/PROTOCOL.md` | Exact wire contract |
-| `docs/MONITORING.md` | Runtime policy, configuration and status contract |
-| `docs/PERSISTENCE.md`, `migrations/` | Database history, queue/outage contract and schema |
-| `systemd/` | Unprivileged notify/watchdog service |
-| `docs/DECISIONS.md` | Decisions and brief interpretation |
-| `docs/LEARNING_GUIDE.md` | Plain-English implementation explanation |
-| `CODEX_STATE.md` | Current state and exact next checkpoint |
+| GitHub Actions workflow | GCC/Clang builds; C/Python units; decoder CLI; real PostgreSQL schema/transaction/permission checks; ASan/UBSan; GCC analyzer; 10-second fuzz budget |
+| Linux-local gate | Real vcan decoder/monitor/persistence scenarios, database outages, load accounting, systemd, TSan/Helgrind, demo and longer fuzz session |
 
-CRC/counters do not authenticate senders. vcan proves Linux application
-behavior; it cannot model arbitration, bitrate limits, wiring or electrical
-faults. No hardware, load-capacity or crash-durable queue claim is made. Current
-alarms and counters exist in daemon memory; database records are historical
-evidence. No on-disk spool, API, dashboard, Buildroot or Checkpoint 4 work is added.
+The workflow does not assume hosted runners can configure vcan. It neither skips
+a failed bus test nor substitutes a Python virtual bus. Its commands have been
+run locally; **a hosted CI run has not yet been performed**, so no hosted green
+badge or CI-proven platform claim is made. Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+## Limits and non-claims
+
+- Queue memory is volatile: N pending readings, 256 events and one immutable
+  in-flight batch of at most 32 records. Oldest pending records are evicted and
+  counted. The demo's capacity-four/eleven-arrival fixture has no readings in flight.
+- Database recovery backfills retained records and writes gaps only for known
+  loss. SIGKILL loses unpersisted memory. A lost COMMIT response is ambiguous;
+  some unconfirmed data may already be stored. New runs cannot reconstruct lost
+  counters/history. There is no disk spool or crash-durable queue.
+- vcan load tests measure Linux application behavior. They cannot establish CAN
+  arbitration, bitrate limits, electrical behavior, wiring quality or bus-off
+  recovery. The burst test disables persistence; it is not a database-throughput claim.
+- CRC/counters do not authenticate a sender. Large sequence gaps and old replays
+  across wraps are ambiguous. Stable readings are not proof of failed sensors.
+- Rate plausibility uses receive time: scheduler batching can create apparent
+  spikes and reject otherwise reasonable samples.
+- No hard real-time or production-capacity guarantee. Diagnostic regular-file
+  output may block; full diagnostic pipes drop counted lines. PostgreSQL/storage
+  determine the durability of committed rows.
+- No hardware validation, NetBotz/A-Link compatibility, dashboard/API, authenticated
+  CAN, on-disk spool or Buildroot extension is included.
+
+Start with the [learning guide](docs/LEARNING_GUIDE.md), then `src/monitor.c`,
+`src/queue.c` and `src/persistence.c`. [Decisions](docs/DECISIONS.md) record brief
+refinements. [State](CODEX_STATE.md) records the completed checkpoint and boundary.
+Earlier evidence: [1](docs/CHECKPOINT_1_VERIFICATION.md),
+[2](docs/CHECKPOINT_2_VERIFICATION.md), [3](docs/CHECKPOINT_3_VERIFICATION.md).

@@ -5,11 +5,27 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 option(VIGIL_TSAN "Enable thread sanitizer (separate build)" OFF)
 option(VIGIL_SANITIZERS "Enable address and undefined-behavior sanitizers" OFF)
+option(VIGIL_FUZZER "Build Clang libFuzzer decoder target with ASan/UBSan" OFF)
 add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wconversion
                     -Wsign-conversion -Wshadow -Wstrict-prototypes
-                    -Wmissing-prototypes -Wformat=2 -Wundef)
+                    -Wmissing-prototypes -Wformat=2 -Wundef -Wcast-align
+                    -Wwrite-strings -Wvla -Wdouble-promotion -Wnull-dereference)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-Wformat-signedness -Wduplicated-cond -Wduplicated-branches -Wlogical-op)
+endif()
 if(VIGIL_TSAN AND VIGIL_SANITIZERS)
   message(FATAL_ERROR "Use separate sanitizer builds")
+endif()
+if(VIGIL_FUZZER)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR VIGIL_TSAN)
+    message(FATAL_ERROR "libFuzzer requires a separate Clang build without TSan")
+  endif()
+  add_executable(fuzz-decoder fuzz/decoder.c src/protocol.c)
+  target_include_directories(fuzz-decoder PRIVATE include)
+  # Compile the decoder itself with coverage and sanitizers, not only the driver.
+  target_compile_options(fuzz-decoder PRIVATE -UNDEBUG -fsanitize=fuzzer,address,undefined
+                         -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  target_link_options(fuzz-decoder PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 if(VIGIL_TSAN)
   add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)

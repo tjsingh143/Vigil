@@ -295,7 +295,8 @@ static bool receive_batch(int fd, struct vigil_monitor *m, struct diagnostics *d
         struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1,
                              .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes)};
         ssize_t received = recvmsg(fd, &msg, 0);
-        if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return true;
+        /* Linux defines EWOULDBLOCK as EAGAIN. */
+        if (received < 0 && errno == EAGAIN) return true;
         if (received < 0 && errno == EINTR) continue;
         if (received < 0) return false;
         if (received != CAN_MTU || (msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0) {

@@ -266,5 +266,79 @@ therefore run, in addition to ASan/UBSan and Helgrind concurrent queue checks.
 System libraries are not rebuilt with sanitizer instrumentation; this remains
 finite dynamic evidence. See [checkpoint evidence](CHECKPOINT_3_VERIFICATION.md).
 
-Checkpoint 4 is not started. Fuzzing/CI, a demonstration bundle, extended load
-characterization, Buildroot and all deferred products remain outside this work.
+At Checkpoint 3 completion, Checkpoint 4 had not started. Fuzzing/CI, a
+demonstration bundle and load characterization were deferred to the evidence
+checkpoint recorded below. Buildroot and all deferred products remain outside
+the completed core.
+
+
+## Checkpoint 4 — evidence (2026-09-26 local / 27 UTC)
+
+The owner authorized the complete evidence checkpoint and local commit, with
+one Codex agent only. All eight pages of version 3 and the required project
+records were read before edits. The initial working tree at `89f13f5` was clean.
+The initial clean baseline exposed test-harness regressions: startup could
+expire freshness before simulators became ready; waits could select an old
+startup snapshot; simulator startup/shutdown waits stopped draining diagnostic
+pipes. The fix records an observed healthy baseline, bounds observations to the
+correct phase and drains during lifecycle waits. No daemon freshness or rejection
+policy was weakened. The existing complete clean gate subsequently passed.
+
+The scenario table is an executable Python harness over the existing real
+SocketCAN encoder, daemon and disposable PostgreSQL cluster. Deterministic raw
+frame injection is a test control, not a substitute transport or additional
+product feature. Each case prints an expectation, asserts the actual state and
+retains JSON measurements and raw diagnostic/configuration files. systemd's
+SIGKILL case now proves exact known queue loss and actual supervisor restart
+in one fixture. SQL state and run IDs are checked directly.
+
+Timeout evidence distinguishes the configured deadline from timer quantization
+and Linux scheduling: the 500 ms fixture uses a 20 ms tick with a documented
+200 ms test allowance. It must never alarm early; observed ages are recorded.
+The high-rate fixture counts kernel receive losses via SO_RXQ_OVFL and a final
+post-drain heartbeat; no inference from the 8-bit sequence is presented as an
+exact transport count. A paused-receiver case forces loss. Burst rates and counts
+are specific to the run, with persistence disabled, and say nothing about
+physical CAN arbitration, bitrate limits or electrical effects.
+
+One libFuzzer target compiles the decoder itself with coverage, ASan and UBSan.
+Thirty reproducible seeds use existing wire vectors plus malformed cases. Its
+oracles include error-output immutability and successful-field invariants;
+there is no stateful daemon/persistence fuzzing claim. Strict warnings now also
+cover cast alignment, writable strings, VLAs, double promotion, null dereferences
+and GCC duplicate/logical/format-signedness checks. GCC -fanalyzer adds a small
+static gate. The only production-code change removes redundant EWOULDBLOCK
+comparison (an EAGAIN alias in Linux); no wire semantics changed, so protocol
+and cross-language vectors remain unchanged.
+
+GitHub Actions runs the identical non-vcan command script tested locally:
+GCC/Clang build, C/Python units, decoder CLI, actual PostgreSQL transactional and
+permission contracts, ASan/UBSan, analyzer and short fuzz run. vcan/systemd are
+mandatory separate local gates, not conditional passes or mocked replacements.
+Actions are pinned to resolved upstream commit hashes; the job has read-only
+repository permissions and uploads failure logs. No remote or hosted run was
+created; local success must not be described as a hosted green CI result.
+
+The full verifier starts clean builds, runs all original and added gates plus
+the demo and longer fuzz session, then renders VERIFICATION.md from actual
+results and SQL exports. The implementation digest covers CMake, src, include,
+tests, scripts, simulator, config, migrations, systemd, fuzz and workflow files;
+the `docs/` directory, root README and state file are excluded so the generated
+report can identify its own source without a circular hash. The checked-out parent commit plus this digest identifies
+the tested pre-commit working tree. Logs remain local/ignored; the concise measured
+report is committed. The original Checkpoint 1 report is preserved as
+CHECKPOINT_1_VERIFICATION.md.
+
+The section-7 owner-first coding process deviation and Checkpoint 3 immutable
+in-flight batch / asynchronous libpq refinements remain documented. The core is
+not a NetBotz or A-Link reproduction. No Buildroot, hardware, spool, API, dashboard,
+retention system, or authenticated-CAN extension is authorized or started.
+
+
+A final clean rerun exposed another fixture assumption: a scheduler stall can
+batch simulator samples into the same receive timestamp, triggering the existing
+rate rule. Transport/count and silence tests now configure rate=0 to isolate
+those concerns; rate boundaries remain in deterministic C tests. This is not a
+production-policy relaxation. Arrival-time slope inference and its possible
+false invalidation under batching are explicitly documented in MONITORING.md,
+README and the learning guide. The complete clean gate is rerun after the fix.

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from monitor_integration import Daemon, ROOT, bus, config_text, send, source
+from monitor_integration import Daemon, ROOT, bus, config_text, send, source, parse
 from simulator.protocol import reading, heartbeat
 
 
@@ -221,6 +221,10 @@ def outage(executable, pg, overflow):
         print(f"PASS {'overflow' if overflow else 'backfill'}: capacity={cap} outage_readings={count} "
               f"dropped={expected_drop} retained={min(count,cap)} alarm_age_ms={alarm_age} "
               f"outage_ms={done['last_outage_ms']} reconnects={done['reconnects']} gaps={done['gap_markers']}")
+        return dict(capacity=cap, outage_readings=count, dropped=expected_drop,
+                    retained=min(count, cap), alarm_age_ms=alarm_age,
+                    outage_ms=done["last_outage_ms"], gap_markers=done["gap_markers"],
+                    run_id=rid, sql_readings=readings(pg, rid), final=final)
 
 
 def slow_query(executable, pg):
@@ -432,10 +436,11 @@ def crash(executable, pg):
 
 def systemd_gate(executable, pg):
     """Exercise actual unit sandbox/User/notify/watchdog/restart on Linux PID 1."""
-    unit = "vigil-checkpoint3.service"
-    dest = Path("/usr/local/libexec/vigil-checkpoint3")
+    unit = "vigil-evidence.service"
+    dest = Path("/usr/local/libexec/vigil-evidence")
     assert not dest.exists(), "test service directory already exists"
     unit_path = Path("/run/systemd/system") / unit
+    journal_since = f"@{time.time():.6f}"
     assert not unit_path.exists(), "test unit already exists"
     run(["sudo", "install", "-d", "-m", "0755", str(dest)])
     try:
@@ -464,12 +469,38 @@ def systemd_gate(executable, pg):
         uid = run(["id", "-u", "vigil"]).stdout.strip()
         assert f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}" in Path(f"/proc/{pid}/status").read_text()
         assert int(prop("WatchdogTimestampMonotonic")) > 0
+        def service_status(service_pid, predicate, timeout=10):
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                journal = run(["sudo", "journalctl", "-u", unit, f"_PID={service_pid}",
+                               "--since", journal_since, "--no-pager", "-o", "cat", "-n", "2000"]).stdout
+                rows = [parse(line) for line in journal.splitlines() if line.startswith("persistence ")]
+                if rows:
+                    last = rows[-1]
+                    if predicate(last):
+                        return last
+                time.sleep(0.05)
+            raise AssertionError(f"service status deadline: {last}")
+
+        service_status(pid, caught_up)
+        inject(0, 2)
+        baseline = service_status(pid, lambda s: s["readings_written"] == 2 and caught_up(s))
+        rid = baseline["run_id"]
+        assert readings(pg, rid) == [2800, 2801]
         # Enough time to exceed one watchdog interval: healthy main keeps it alive.
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             time.sleep(0.2)
             assert int(prop("MainPID")) == pid and prop("SubState") == "running"
         pg.stop()
+        service_status(pid, lambda s: not s["connected"] and s["connection_failures"] >= 1
+                       and s["in_flight_readings"] == 0)
+        inject(2, 3)
+        pending = service_status(pid, lambda s: s["reading_depth"] == 3 and s["degraded"] == 1)
+        assert pending["readings_written"] == 2 and pending["readings_dropped"] == 0
+        assert pending["in_flight_readings"] == 0
+        killed_ms = int(time.monotonic() * 1000)
         run(["sudo", "systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", unit])
         deadline = time.monotonic() + 6
         while time.monotonic() < deadline:
@@ -479,6 +510,9 @@ def systemd_gate(executable, pg):
         else:
             raise AssertionError("systemd did not restart after SIGKILL")
         pid2 = int(prop("MainPID"))
+        restarted_ms = int(time.monotonic() * 1000)
+        restarted = service_status(pid2, lambda s: s["readings_queued"] == 0 and s["degraded"] == 1)
+        assert restarted["run_id"] != rid
         run(["sudo", "systemctl", "kill", "--kill-who=main", "--signal=SIGSTOP", unit])
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
@@ -493,17 +527,28 @@ def systemd_gate(executable, pg):
         run(["sudo", "systemctl", "stop", unit])
         elapsed = time.monotonic() - start
         assert prop("ActiveState") == "inactive" and elapsed < 2
-        journal = run(["sudo", "journalctl", "-u", unit, "--no-pager", "-n", "200"]).stdout
+        journal = run(["sudo", "journalctl", "-u", unit, "--since", journal_since,
+                       "--no-pager", "-n", "10000"]).stdout
         assert "Watchdog timeout" in journal
+        directory = os.environ.get("VIGIL_EVIDENCE_DIR")
+        if directory:
+            Path(directory, "systemd-journal.log").write_text(journal)
         pg.start()
+        assert readings(pg, rid) == [2800, 2801]
+        assert readings(pg, restarted["run_id"]) == []
+        assert pg.sql(f"SELECT coalesce(sum(reading_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'") == "0"
         print(f"PASS systemd: unprivileged uid={uid}, Type=notify ready, healthy watchdog, "
-              f"SIGKILL + watchdog restarts={restarts}, outage_stop_s={elapsed:.3f}")
+              f"SIGKILL + watchdog restarts={restarts}, outage_stop_s={elapsed:.3f}, "
+              f"committed=2 crash_lost=3 restart_ms={restarted_ms-killed_ms}")
+        return dict(uid=int(uid), restarts=restarts, outage_stop_s=elapsed,
+                    committed=2, crash_lost=3, killed_ms=killed_ms, restarted_ms=restarted_ms,
+                    old_run_id=rid, new_run_id=restarted["run_id"], before_kill=pending)
     finally:
-        subprocess.run(["sudo", "systemctl", "stop", unit], capture_output=True, timeout=10)
+        if unit_path.exists():
+            run(["sudo", "systemctl", "stop", unit])
         run(["sudo", "rm", "-f", str(unit_path)])
         run(["sudo", "rm", "-rf", str(dest)])
         run(["sudo", "systemctl", "daemon-reload"])
-        subprocess.run(["sudo", "systemctl", "reset-failed", unit], capture_output=True)
         if not pg.running:
             pg.start()
 

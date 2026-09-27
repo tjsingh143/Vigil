@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+seconds=${1:-30}
+[[ $# -le 2 && $seconds =~ ^[1-9][0-9]*$ ]] || { echo 'usage: scripts/fuzz [seconds] [new-output-directory]' >&2; exit 2; }
+output=${2:-artifacts/fuzz-$(date -u +%Y%m%dT%H%M%SZ)}
+mkdir -p artifacts
+mkdir "$output"
+printf 'EXPECT: decoder fuzzing for %s seconds; no crash, ASan/UBSan finding or invariant failure.\n' "$seconds"
+cmake -S . -B build-fuzz -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Debug -DVIGIL_FUZZER=ON -DBUILD_TESTING=OFF
+cmake --build build-fuzz --target fuzz-decoder --parallel 2
+python3 fuzz/seed.py "$output/corpus"
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+# pipefail preserves the fuzzer's failure, while tee retains its exact output.
+command=(build-fuzz/fuzz-decoder "$output/corpus" -seed=1 -max_len=69 -timeout=2
+         -rss_limit_mb=512 -max_total_time="$seconds" -print_final_stats=1 -artifact_prefix="$output/")
+printf '%q ' "${command[@]}" | tee "$output/command.txt"
+printf '\n' | tee -a "$output/command.txt"
+"${command[@]}" 2>&1 | tee "$output/fuzzer.log"

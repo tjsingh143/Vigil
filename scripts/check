@@ -8,6 +8,7 @@ if [[ ${1:-} == --clean ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check [--clean]' >&2; exit 1
 fi
+printf 'EXPECT: strict clean build, 45 C cases in each build, six Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
@@ -33,5 +34,5 @@ export TSAN_OPTIONS=halt_on_error=1
 setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
 setarch "$(uname -m)" -R .venv/bin/python tests/persistence_integration.py --daemon build-tsan/vigild
 valgrind --tool=helgrind --error-exitcode=99 --fair-sched=yes build/test_queue
-bash -n scripts/dev scripts/setup-linux scripts/vcan-up scripts/check scripts/install-service scripts/setup-database
+for script in scripts/*; do bash -n "$script"; done
 git diff --check

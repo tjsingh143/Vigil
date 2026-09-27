@@ -1,4 +1,4 @@
-# Understanding Vigil: Checkpoints 1 through 3
+# Understanding Vigil: Checkpoints 1 through 4
 
 ## What exists today
 
@@ -29,7 +29,8 @@ Another VM has another kernel and cannot automatically see this `vcan0`.
 vcan tests application logic and integration. It does not reproduce bus
 arbitration, bitrate limits, electrical noise, termination or bus-off faults.
 Even a successful high-rate vcan test would only measure application behavior.
-No throughput measurement has been made in this checkpoint.
+Checkpoint 4 measures offered burst rate, delivered frames and exact socket drops;
+the current observed numbers are in `docs/VERIFICATION.md`.
 
 ## Walk through a reading
 
@@ -333,3 +334,106 @@ and kill a process during a known outage. Address/undefined/thread sanitizers
 and concurrent queue tests check different classes of defects; none proves
 absence of every race or validates physical CAN. GCC TSan requires disabling
 ASLR for its test subprocess tree in this VM, not for the operating system.
+
+
+## Dead pod, quiet channel, or stable room?
+
+A heartbeat says the pod's publisher is communicating; it cannot refresh a
+quiet temperature channel. A temperature channel can be stale while heartbeat
+is fresh. If both readings and heartbeat expire, Vigil reports communication
+loss; it still cannot distinguish a powered-off pod from a broken link, a
+stopped process, or lost traffic using these observations alone. “Dead” is a
+possible cause, not a proven diagnosis. A quiet bus still wakes timerfd, so
+silence cannot prevent timeout processing.
+
+If equal measurements arrive with advancing counters, the publisher is making
+progress. After the configured flat window the measurement is suspicious, but
+still usable if fresh and otherwise valid. It could be a stable room. If the
+same counter repeats instead, progress failed: repeats are rejected, do not
+refresh the last usable value, and eventually freshness fails too. Separate
+fields prevent “stable” and “stuck publisher” from being conflated.
+
+## Explain the interview demo without memorizing its output
+
+Run `scripts/demo`. First the pod sends three cycles (six readings and three
+heartbeats). Silence then expires three freshness deadlines. Values remain
+visible but current=0. The returning pod starts new sequence baselines and
+provides two more readings: eight readings now committed in SQL.
+
+The demo stops its disposable PostgreSQL cluster and waits for an observed
+connection failure with no readings in flight. Eleven new temperature readings
+arrive. The main loop accepts them and raises high temperature while the writer
+cannot persist. Pending capacity is four: seven oldest pending readings are
+evicted, the newest four remain, and degraded state is active. Temperature
+silence still expires normally during this outage. The high alarm remains:
+a stale value is not evidence that the room cooled.
+
+On database return, four readings backfill. SQL now has twelve readings, plus
+an explicit seven-reading gap and the latest alarm snapshot. Degraded clears
+when all retained work, gaps and alarm revisions are acknowledged. The demo
+checks those exact rows, exports them, and prints monotonic observation times,
+UTC run times, accepted/written/dropped counts and outage duration. It does not
+claim the outage started exactly when the database process stopped: the daemon's
+outage clock starts when the writer observes failure.
+
+## What the load evidence says
+
+The harness pre-encodes 256 counter variants and sends a finite 50,000-frame
+burst. A later heartbeat proves drain completion and exposes Linux's cumulative
+SO_RXQ_OVFL count even if the burst ended with dropped frames. The assertion is
+50,001 sent = daemon frames received + kernel receive drops. Received frames
+also equal accepted readings + heartbeats + rejected frames. The final report
+labels offered rate and duration for that run, not a sustained throughput limit.
+
+A separate fixture pauses the receiver before the burst to force overflow and
+exercise the accounting path. Its send rate is not a receiver performance
+measurement. Eight-bit counter loss can undercount huge gaps or classify them
+as ambiguous; never add that inferred number to the independent socket drops.
+These load fixtures disable persistence to isolate application receive behavior.
+Neither models CAN arbitration, bitrate, transceivers, termination, noise,
+bus-off, or electrical safety. Testing can0 on hardware is separate work.
+
+## What the fuzzer actually tested and found
+
+The libFuzzer input describes a raw ID, FD flag and actual payload bytes. The
+target repeatedly calls the pure decoder with lengths derived from the input;
+it checks immutable output on rejection, valid fields on success, and null
+argument behavior. Thirty deterministic seeds include the shared literal wire
+examples and deliberately malformed cases. Both target and decoder are compiled
+with ASan and UBSan. The target contains no clocks, bus, database, or shared state.
+
+The local sessions were actually executed. Their logs show no crash, sanitizer
+warning, or assertion failure. Give the final execution count and duration from
+`docs/VERIFICATION.md` when asked what it found; those are observed numbers.
+Do not say “there are no bugs.” This target cannot find all monitoring, queue,
+scheduling, database or physical-bus faults. C unit tests, real Linux scenarios,
+thread checking and SQL inspection provide different evidence.
+
+## How to judge an evidence claim
+
+`tests/evidence.py` prints expectations before each scenario, then saves its
+result and measurements. Failed assertions exit nonzero and retain diagnostics.
+`tests/verify_checkpoint.py` executes the complete gate, validates result counts,
+reads saved SQL history and creates `docs/VERIFICATION.md`. The report identifies
+the checked-out commit and a hash of the tested implementation, so a final
+local documentation commit is not confused with a different binary.
+
+GitHub Actions runs the non-vcan subset: builds, units, CLI, real PostgreSQL
+transaction/permission contracts, ASan/UBSan, GCC static analysis and short
+fuzzing. Its commands passed locally; the repository has not been published and
+no hosted execution is claimed. Real vcan, systemd supervision, TSan/Helgrind,
+outage scenarios and the interview story remain explicit Linux-local gates.
+The manual checklist supplies independent can-utils observations and space for
+a human's actual results; it does not replace automated assertions.
+
+
+## Why a healthy simulator can fail a receive-time rate check
+
+The protocol has no per-reading source timestamp. If Linux pauses the receiver
+and later delivers two different values in the same millisecond, the monitor
+sees almost zero elapsed time and an apparent excessive slope. Checkpoint 4
+observed this under VM scheduling load. The rate policy remains unchanged;
+transport/count and silence tests explicitly disable it so they test their
+stated concern. Exact slope/equality/zero-time boundaries remain in C tests.
+This limitation belongs in an interview answer about plausibility: an alarm is
+evidence under a policy and its assumptions, not proof of physical failure.
