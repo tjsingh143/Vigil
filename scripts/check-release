@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux ]] || { echo 'Use ./scripts/dev ./scripts/check-release --clean' >&2; exit 1; }
+if [[ ${1:-} == --clean && $# == 1 ]]; then
+    rm -rf -- build-release
+elif [[ $# != 0 ]]; then
+    echo 'usage: scripts/check-release [--clean]' >&2; exit 2
+fi
+printf 'EXPECT: optimized Release build; 45 cmocka cases; real decoder, monitoring and persistence regressions all pass.\n'
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel 2
+ctest --test-dir build-release -V
+./scripts/vcan-up
+.venv/bin/python tests/integration.py --decoder build-release/vigil-decode
+.venv/bin/python tests/monitor_integration.py --daemon build-release/vigild
+.venv/bin/python tests/persistence_integration.py --daemon build-release/vigild

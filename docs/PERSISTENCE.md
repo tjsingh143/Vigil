@@ -1,4 +1,4 @@
-# Persistence and service contract (Checkpoint 3)
+# Persistence and service contract
 
 ## Owners and memory bounds
 
@@ -141,6 +141,12 @@ use `PGPASSFILE` (0600, readable by vigil) for TCP credentials. The supplied
 local installation uses Unix peer authentication, no password. Server notices are discarded to avoid libpq's default blocking stderr sink.
 Query failures expose only SQLSTATE (or transport 08001/08006), never connection strings or
 credentials. Permanent schema/auth errors remain degraded with paced retry.
+The client deadlines bound network polling, not arbitrary local filesystem
+stalls in libpq credential/certificate reads or scheduler suspension. Keep
+those files local and accessible. The tests cover local peer/trust connections,
+denied function permission and unresponsive TCP, not a remote TLS/Kerberos
+failure matrix. Runtime counters can represent more than SQL signed bigint;
+no multi-century counter/sequence exhaustion guarantee is made.
 `--no-persistence` is explicit diagnostic/test mode; Checkpoint 1/2 regression
 uses it so unrelated database state cannot alter their original contracts.
 

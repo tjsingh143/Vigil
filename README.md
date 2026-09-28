@@ -6,9 +6,11 @@ and records history in PostgreSQL without making monitoring wait for the databas
 It exists to make failures observable and testable: what stopped, when it was
 detected, what history survived, and exactly what was lost.
 
-The complete core and Checkpoint 4 evidence implement `PROJECT_BRIEF.pdf` v3.
+The finished core and final audit implement `PROJECT_BRIEF.pdf` v3, with the
+documented architecture/process refinements and limitations below.
 This is an original small protocol and engineering exercise. It does not reproduce
-Schneider NetBotz or A-Link. Actual runs and qualifications: [verification](docs/VERIFICATION.md).
+Schneider NetBotz or A-Link. Start with the [final audit](docs/FINAL_VERIFICATION.md),
+[interview guide](docs/INTERVIEW_GUIDE.md) and [measured verification](docs/VERIFICATION.md).
 
 ## Architecture
 
@@ -129,6 +131,7 @@ Sudo is needed for network and unit setup; the daemon remains unprivileged.
 ./scripts/verify --clean        # complete gate; writes observed docs/VERIFICATION.md
 ./scripts/check --clean         # C/Python, vcan, PostgreSQL, systemd, sanitizers, Helgrind
 ./scripts/check-ci --clean      # exact hosted-CI command suite, no vcan/systemd dependency
+./scripts/check-release --clean # optimized build and real decoder/monitor/persistence integration
 .venv/bin/python tests/fault_scenarios.py --output artifacts/my-fault-run
 .venv/bin/python tests/database_contract.py
 ./scripts/fuzz 120              # libFuzzer + ASan + UBSan; saved corpus/log/crash artifacts
@@ -142,8 +145,9 @@ in new directories under `artifacts/`. Do not reuse an output directory.
 showing healthy → silent/stale → return → database outage → queue drops → backfill
 and gap. [Manual CAN checklist](docs/MANUAL_CAN.md) supplements automation.
 
-The complete gate includes 45 cmocka cases, six Python unit cases, ten fault
-cases, decoder/daemon integration, SQL assertions, systemd SIGKILL/watchdog
+The complete gate includes 45 cmocka cases in six builds, seven Python unit
+cases, ten brief fault scenarios, and five additional hardening scenarios in
+Release/ASan/TSan. It includes decoder/daemon integration, SQL assertions, systemd SIGKILL/watchdog
 restart, GCC/Clang strict diagnostics, GCC static analysis, ASan/UBSan, TSan,
 Helgrind and a 120-second fuzz budget. TSan uses `setarch -R` for its process tree
 on the ARM64 VM; global ASLR is unchanged. [Fuzzer contract](fuzz/README.md).
@@ -176,11 +180,14 @@ badge or CI-proven platform claim is made. Workflow: [.github/workflows/ci.yml](
   spikes and reject otherwise reasonable samples.
 - No hard real-time or production-capacity guarantee. Diagnostic regular-file
   output may block; full diagnostic pipes drop counted lines. PostgreSQL/storage
-  determine the durability of committed rows.
+  determine the durability of committed rows. Network deadlines do not bound
+  local libpq credential/certificate file stalls or arbitrary scheduler delays.
 - No hardware validation, NetBotz/A-Link compatibility, dashboard/API, authenticated
   CAN, on-disk spool or Buildroot extension is included.
 
-Start with the [learning guide](docs/LEARNING_GUIDE.md), then `src/monitor.c`,
+Use the [interview guide](docs/INTERVIEW_GUIDE.md) to demonstrate the project and
+the [resume evidence](docs/RESUME_EVIDENCE.md) to choose defensible claims.
+Study the [learning guide](docs/LEARNING_GUIDE.md), then `src/monitor.c`,
 `src/queue.c` and `src/persistence.c`. [Decisions](docs/DECISIONS.md) record brief
 refinements. [State](CODEX_STATE.md) records the completed checkpoint and boundary.
 Earlier evidence: [1](docs/CHECKPOINT_1_VERIFICATION.md),

@@ -38,7 +38,8 @@ def parse(line):
     result = {"event": event}
     for field in fields:
         key, value = field.split("=", 1)
-        result[key] = int(value) if value.lstrip("-").isdigit() else value
+        # SQLSTATE is a five-character identifier: 08001 must retain its zero.
+        result[key] = int(value) if key != "last_error" and value.lstrip("-").isdigit() else value
     return result
 
 
@@ -62,13 +63,13 @@ def progress(snap, pod, channel):
 
 
 class Daemon:
-    def __init__(self, executable, config, persistence=False, extra_args=(), env=None):
+    def __init__(self, executable, config, persistence=False, extra_args=(), env=None, pipesize=-1):
         self.config = tempfile.NamedTemporaryFile(mode="w+", prefix="vigil-live-", suffix=".conf")
         self.config.write(config)
         self.config.flush()
         self.child = subprocess.Popen([executable, "--config", self.config.name,
                                       *([] if persistence else ["--no-persistence"]), *extra_args], cwd=ROOT, env=env,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=pipesize)
         self.buffer = b""
         self.pending = None
         self.snapshots = []

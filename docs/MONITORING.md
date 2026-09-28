@@ -1,4 +1,4 @@
-# Monitoring contract (Checkpoint 2)
+# Monitoring contract
 
 `vigild` is a foreground Linux daemon whose main thread owns monitoring.
 The monitoring core uses no heap allocation and has bounded state for 16 pods.
@@ -176,7 +176,8 @@ expirations beyond one per timer read.
 Diagnostic lines use bounded nonblocking writes. Full/closed pipes drop
 lines and increment `diagnostics_dropped`; alarms remain in memory. For
 exact evidence reject incomplete/dropped snapshots and request a later one
-with a draining reader. No event history is retained. O_NONBLOCK cannot stop
+with a draining reader. Diagnostics have no replay buffer; PostgreSQL event
+history follows the separate persistence contract. O_NONBLOCK cannot stop
 regular filesystem writes from blocking: use a responsive terminal or pipe,
 not a potentially stalled network filesystem. Output is not durable history.
 

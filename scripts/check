@@ -8,7 +8,7 @@ if [[ ${1:-} == --clean ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check [--clean]' >&2; exit 1
 fi
-printf 'EXPECT: strict clean build, 45 C cases in each build, six Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
+printf 'EXPECT: strict clean build, 45 C cases in each build, seven Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure

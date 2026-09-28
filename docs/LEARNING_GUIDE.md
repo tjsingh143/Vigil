@@ -1,4 +1,4 @@
-# Understanding Vigil: Checkpoints 1 through 4
+# Understanding the finished Vigil core
 
 ## What exists today
 
@@ -230,10 +230,10 @@ stops monitoring whenever a database call waits.
 
 The persistence thread is a second execution path. The main thread copies a
 small record to the queue and returns to monitoring. The writer removes a
-batch and talks to PostgreSQL while main continues. The writer even uses
-socket deadlines internally, so a dead connection cannot prevent a bounded
-shutdown. This does not make the main loop a hard real-time system; Linux
-scheduling and diagnostic/filesystem behavior still have limits.
+batch and talks to PostgreSQL while main continues. The writer uses socket
+deadlines internally to bound network waits during shutdown. Local credential/
+certificate file reads and arbitrary scheduler stalls remain outside those
+deadlines. This does not make the main loop a hard real-time system.
 
 ## What the two threads share and why the lock is short
 
@@ -437,3 +437,78 @@ transport/count and silence tests explicitly disable it so they test their
 stated concern. Exact slope/equality/zero-time boundaries remain in C tests.
 This limitation belongs in an interview answer about plausibility: an alarm is
 evidence under a policy and its assumptions, not proof of physical failure.
+
+## Read the actual call paths
+
+Use this map with the source open. Follow the data and ownership, not just the
+function names. [INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md) supplies the demonstration;
+[FINAL_VERIFICATION.md](FINAL_VERIFICATION.md) records release evidence.
+
+| Entry and calls | What to trace in the code |
+| --- | --- |
+| `vigild.c: main → receive_batch` | `recvmsg` supplies a complete classic CAN frame and optional cumulative socket-drop count. Tick before processing. At most 64 receives before returning to poll. |
+| `monitor.c: vigil_monitor_frame → vigil_decode` | Count receipt, validate syntax in a local result. A decode error maps to one reject reason; no pod/source mutation. |
+| `protocol.c: vigil_decode` | Six/seven-byte checks precede indexing. Build little-endian unsigned values explicitly. For negative int16 subtract 65536 in int32 before narrowing. Only `*out = msg` publishes success. |
+| `monitor.c: progress` | Compare modulo-256 distance, preserve baseline on repeat/old, advance it even if the later physical check fails. Reset only after decoded-stream silence. |
+| `monitor.c: reading` | Status, range and rate determine validity. Last usable value/time change only on success. Flatness is a separate warning. Hysteresis uses prior alarm state. |
+| `monitor.c: alarm_set → vigild.c: alarm_event` | Update lifecycle exactly once per state transition; synchronously copy an event to the queue. No database call here. |
+| `vigild.c: persist_frame / persistence_update` | Copy accepted/rejected frame evidence; publish all current alarm states when the revision changes. The copied snapshot can outlive this poll turn. |
+| `queue.c: vigil_queue_push / vigil_queue_take` | FIFO indices wrap modulo capacity. Full lanes lose their oldest pending record. The writer merges by enqueue sequence, copies at most 32, then unlocks. |
+| `persistence.c: writer → make_batch → write_db` | Serialize outside the lock; bind JSON as a libpq parameter. Keep the same batch payload/ID on failure. Only a confirmed success acknowledges counts. |
+| `001_history.sql: write_batch` | Check the batch ledger, insert run/history/checkpoint in one transaction. Retry after committed-but-lost response returns without duplicating rows/gaps. |
+| `vigild.c: shutdown → vigil_persistence_stop` | Stop new monitoring, publish final state, signal a one-second drain budget, join writer, then destroy mutex/queue and close descriptors. |
+
+## Work these examples on paper
+
+With the default 3000 ms timeout and 500 wire-units/second rate, inject times
+explicitly as the C tests do. Temperature starts with no value:
+
+| Time (ms), counter, value | Expected result and reason |
+| --- | --- |
+| 100, 10, 2200 | First usable value: 22.00 C, baseline 10, current |
+| 200, 14, 2200 | Accept, infer three missing frames; sequence warning active |
+| 250, 14, 2800 | Reject repeat; value/time and baseline remain 2200/200/14 |
+| 300, 15, 9000 | Progress advances to 15; range fails; retained value 2200, validity=range, current=0 |
+| 400, 16, 2201 | Accept: change 1 over 200 ms fits the rate; invalid and sequence warnings are clear |
+| 3400, timer tick | Usable value reaches age 3000 ms; stale/current=0; communication alarm raises |
+
+Notice why the invalid frame must still advance progress: counter 16 follows
+15, not 14. Notice why the repeat cannot refresh time. A heartbeat between
+those steps affects neither temperature timestamp nor validity.
+
+Next, trace the demo's capacity-four queue. It begins the outage with no readings
+in flight. Eleven new readings cause seven evictions and leave four pending.
+Each accepted reading is accounted for once as written, dropped, pending or
+in-flight. Events have separate counts. After recovery, four writes plus seven
+drops equals eleven. The gap is stored history about loss; it does not restore
+the missing values. Drop timestamps bound lost observations, and cumulative
+first/last times can span multiple gap checkpoints.
+
+Finally, interrupt a batch conceptually just after the SQL transaction commits
+but before its response arrives. Explain why `pending` remains true, why the
+batch ID and payload cannot change, and why evicting that batch would falsely
+claim loss. Now kill the daemon too: the new process has neither that payload
+nor those counters. Querying SQL can establish which rows survived, but cannot
+recreate the unknown vanished inputs.
+
+## What the final audit added
+
+The new gate builds optimized Release code and repeats real Linux integrations.
+It tests six quick publisher-counter restarts followed by genuine silence,
+three database outages within one daemon UUID, recovery from denied SQL function
+permission, the maximum 193-entry alarm snapshot, and invalid startup settings.
+These also run under ASan/UBSan and TSan. Read `tests/final_hardening.py`: each
+scenario records its expectation before execution and checks externally visible
+state/SQL, not just a successful process exit.
+
+Review found an evidence parser converting SQLSTATE `08001` into integer `8001`.
+The fix preserves SQLSTATE as a string; counters remain integers. This affected
+saved evidence, not the daemon's diagnostics or database behavior. A Python
+regression locks down that distinction. Do not attribute this finding to the
+decoder fuzzer: the fuzzer cannot reach the Python parser.
+
+Before an interview, explain the table above without this guide, locate the
+relevant functions, run the demo and reconcile its exported SQL with counters.
+Then change a timeout in a disposable test config and predict the effect before
+running it. Understanding this agent-authored implementation is personal work;
+the successful automated tests cannot certify the owner's understanding.

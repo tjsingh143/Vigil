@@ -1,8 +1,8 @@
 # Engineering decisions
 
-Checkpoint 1 entries below are historical. The final section records the
-authorized Checkpoint 2 implementation; [MONITORING.md](MONITORING.md) describes
-the current monitoring policy.
+Entries are chronological records. Statements about unfinished or unauthorized
+work apply to their checkpoint, not to the finished release. The final section
+records Checkpoint 5; [MONITORING.md](MONITORING.md) describes current policy.
 
 ## Scope and authority
 
@@ -342,3 +342,41 @@ those concerns; rate boundaries remain in deterministic C tests. This is not a
 production-policy relaxation. Arrival-time slope inference and its possible
 false invalidation under batching are explicitly documented in MONITORING.md,
 README and the learning guide. The complete clean gate is rerun after the fix.
+
+## Checkpoint 5 — final engineering audit (2026-09-27–28 UTC)
+
+The owner authorized an independent release audit and a conditional, bounded
+Buildroot attempt after the core and evidence package were complete. That
+instruction supersedes the earlier checkpoint stopping boundary. One Codex
+agent read the complete brief, all documentation, repository tree, history,
+source and tests, then ran the original clean gate before edits. The baseline
+passed; prior reports were not treated as proof of current behavior.
+
+The audit confirmed two evidence defects: SQLSTATE identifiers such as `08001`
+lost their leading zero in the Python parser, and the implementation digest
+omitted `tools/decode.c` and environment definitions. The parser now preserves
+identifiers and has a regression test. Digest coverage includes `tools/`,
+`env/` and retained `embedded/` packaging. Historical hashes used the earlier
+coverage; they must not be compared as though they used the new algorithm.
+No production C or SQL behavior changed; the release version is 1.0.0.
+
+The release gate now includes optimized integration and five additional
+behavioral scenarios under Release, ASan/UBSan and TSan: six quick counter
+restarts with silence recovery, three outages within one daemon UUID, denied
+database-function permission followed by recovery, the complete 193-entry
+alarm snapshot, and ten invalid startup configurations. The maximum-snapshot
+observer uses a larger pipe to isolate serialization from the separately
+tested diagnostic-drop policy. It does not weaken that production policy.
+
+The expanded clean core gate passed all ten commands before optional packaging
+began. Interview, resume and learning documents distinguish observed facts
+from suggested wording and the owner's personal understanding. Network
+deadlines are explicitly qualified for local filesystem and scheduling stalls.
+The README installation sequence was also executed against the actual default
+service: six readings and three heartbeats persisted, UID 999, zero rejected
+frames, clean stop. The service was disabled afterward for an idle test bus.
+
+The final release run and optional extension disposition are recorded in
+[FINAL_VERIFICATION.md](FINAL_VERIFICATION.md), with generated core measurements
+in [VERIFICATION.md](VERIFICATION.md). The original owner-first coding process
+deviation and queue/in-flight/libpq refinements remain explicit.

@@ -22,7 +22,7 @@ def source_digest():
     names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard"],
                                     cwd=ROOT, text=True).splitlines()
     prefixes = ("src/", "include/", "tests/", "scripts/", "simulator/", "migrations/",
-                "systemd/", "config/", ".github/", "fuzz/")
+                "systemd/", "config/", ".github/", "fuzz/", "tools/", "env/", "embedded/")
     digest = hashlib.sha256()
     for name in sorted(set(names)):
         if name == "CMakeLists.txt" or name.startswith(prefixes):

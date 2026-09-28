@@ -23,6 +23,6 @@ checks, fix failures, then rerun the complete checkpoint gate from a clean
 build. Report only observed results. Review the diff and update persistent
 state and learning documentation before a local checkpoint commit.
 
-Future daemon rules: monitoring owns in-memory alarms; database I/O belongs
+Daemon ownership rules: monitoring owns in-memory alarms; database I/O belongs
 only to the persistence thread. Queue locks never cover I/O. Freshness,
 progress, and plausibility remain separate dimensions.
