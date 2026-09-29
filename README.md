@@ -1,5 +1,7 @@
 # Vigil
 
+[![Linux build, contracts and fuzz](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml/badge.svg)](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml)
+
 Vigil is a Linux sensor-monitoring daemon in C. It distinguishes stale data,
 non-advancing publishers and implausible measurements, maintains alarms in memory,
 and records history in PostgreSQL without making monitoring wait for the database.
@@ -158,9 +160,13 @@ on the ARM64 VM; global ASLR is unchanged. [Fuzzer contract](fuzz/README.md).
 | Linux-local gate | Real vcan decoder/monitor/persistence scenarios, database outages, load accounting, systemd, TSan/Helgrind, demo and longer fuzz session |
 
 The workflow does not assume hosted runners can configure vcan. It neither skips
-a failed bus test nor substitutes a Python virtual bus. Its commands have been
-run locally; **a hosted CI run has not yet been performed**, so no hosted green
-badge or CI-proven platform claim is made. Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml).
+a failed bus test nor substitutes a Python virtual bus. Its commands were verified
+locally first, and the hosted job has since passed on the release commit
+(`ubuntu-24.04`: 45 cmocka cases per build, seven Python cases, five of five
+PostgreSQL contracts, zero warnings and zero sanitizer/analyzer findings).
+Because that job deliberately omits vcan and systemd, **it is not evidence for the
+bus, supervision or hardware gates**, which remain Linux-local.
+Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Limits and non-claims
 

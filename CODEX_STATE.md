@@ -78,7 +78,9 @@ Tested implementation SHA-256:
 `b87b8f78da76c8bcfbf7c07d7f2ec26f795ca27d56bb18eedebf864479cf419b`.
 Docs/state are excluded to avoid a circular report hash. The local release
 commit is identified by `git log -1 --oneline` and annotated tag `vigil-v1`.
-No remote is configured and nothing was pushed. Per-command commit/tag identity
+The release commit and annotated tag `vigil-v1` are pushed to the public GitHub
+remote `origin` (`https://github.com/tjsingh143/Vigil.git`), where the hosted
+Actions job passed on that commit. Per-command commit/tag identity
 is `Codex <codex@localhost>`; global Git identity is unchanged.
 
 ## Optional Buildroot — deliberately deferred
@@ -127,10 +129,12 @@ Diagnostics can drop counted lines; regular-file I/O can block.
 CRC/counters do not authenticate. Flat readings are suspicion only. Receive-time
 batching can trigger the rate rule. vcan cannot establish physical CAN behavior,
 hardware portability or hard real-time performance. Only Ubuntu ARM64 was
-executed; no board/QEMU image passed. Hosted GitHub Actions was not run.
+executed locally; no board/QEMU image passed. Hosted GitHub Actions passed on
+x86-64 `ubuntu-24.04` for the release commit, excluding vcan and systemd.
 The owner's personal code understanding remains their work, supported by the
 guides; do not misrepresent agent-authored implementation or tests.
 
 **Stop: FINAL/COMPLETE. Do not start another feature.** Buildroot, hardware,
 API/dashboard, Modbus, authenticated CAN, signed backups, retention and a disk
-spool remain outside this release. No publication or push was performed.
+spool remain outside this release. The release commit and `vigil-v1` are published
+to the public GitHub remote; publication added no scope.

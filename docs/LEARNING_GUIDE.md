@@ -420,9 +420,10 @@ local documentation commit is not confused with a different binary.
 
 GitHub Actions runs the non-vcan subset: builds, units, CLI, real PostgreSQL
 transaction/permission contracts, ASan/UBSan, GCC static analysis and short
-fuzzing. Its commands passed locally; the repository has not been published and
-no hosted execution is claimed. Real vcan, systemd supervision, TSan/Helgrind,
-outage scenarios and the interview story remain explicit Linux-local gates.
+fuzzing. Its commands passed locally first and the hosted job later passed on the
+release commit; it still proves nothing outside that non-vcan subset. Real vcan,
+systemd supervision, TSan/Helgrind, outage scenarios and the interview story
+remain explicit Linux-local gates.
 The manual checklist supplies independent can-utils observations and space for
 a human's actual results; it does not replace automated assertions.
 

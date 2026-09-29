@@ -18,7 +18,7 @@ The brief's section-7 process deviation is recorded in [DECISIONS.md](DECISIONS.
 | Unprivileged notify/watchdog/restart service | `systemd/vigild.service`, `src/vigild.c` | Actual systemd UID, readiness, healthy watchdog, SIGKILL and SIGSTOP/watchdog tests |
 | Ten reproducible fault scenarios plus decoder fuzzing | `tests/fault_scenarios.py`, `fuzz/decoder.c`, `fuzz/seed.py` | Complete scenario table; actual finite libFuzzer/ASan/UBSan log |
 | Strict builds, C/Python tests, concurrency checks and optimized integration | `CMakeLists.txt`, `scripts/check*`, `tests/final_hardening.py` | [Final audit](FINAL_VERIFICATION.md) and generated gate results |
-| GitHub Actions workflow authored and its command suite run locally | `.github/workflows/ci.yml`, `scripts/check-ci` | Local CI-equivalent log; **no hosted CI success claimed** |
+| GitHub Actions workflow authored, verified locally, then passed on a hosted runner | `.github/workflows/ci.yml`, `scripts/check-ci` | Local CI-equivalent log plus the successful hosted `ubuntu-24.04` run on the release commit; **the hosted job excludes vcan and systemd** |
 
 The core contains 45 cmocka cases (13 decoder/protocol, 26 monitoring/config,
 six queue/health), seven Python unit cases, ten brief fault scenarios, and five

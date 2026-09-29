@@ -316,8 +316,11 @@ GCC/Clang build, C/Python units, decoder CLI, actual PostgreSQL transactional an
 permission contracts, ASan/UBSan, analyzer and short fuzz run. vcan/systemd are
 mandatory separate local gates, not conditional passes or mocked replacements.
 Actions are pinned to resolved upstream commit hashes; the job has read-only
-repository permissions and uploads failure logs. No remote or hosted run was
-created; local success must not be described as a hosted green CI result.
+repository permissions and uploads failure logs. At the time of this decision no
+remote or hosted run existed, and local success must not be described as a hosted
+green CI result. The repository was published after the 1.0 audit and the hosted
+job passed on the release commit; that result still covers only the non-vcan
+subset and is not evidence for vcan, systemd or hardware.
 
 The full verifier starts clean builds, runs all original and added gates plus
 the demo and longer fuzz session, then renders VERIFICATION.md from actual

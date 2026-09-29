@@ -223,6 +223,7 @@ validation are new work. No hard real-time guarantee. Diagnostics can drop
 counted lines; filesystem output/authentication files can block. Network
 timeouts do not bound every filesystem or scheduler delay.
 
-The GitHub Actions command suite passed locally; no hosted run or remote
-publication occurred. The explicit brief-deferred API/dashboard, Modbus,
+The GitHub Actions command suite passed locally at audit time; the repository was
+published and the hosted run passed on the release commit afterwards, covering only
+the non-vcan subset. The explicit brief-deferred API/dashboard, Modbus,
 signed backups, authenticated CAN, hardware and spool features remain deferred.
