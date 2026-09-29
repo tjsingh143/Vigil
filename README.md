@@ -2,71 +2,45 @@
 
 [![Linux build, contracts and fuzz](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml/badge.svg)](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml)
 
-Vigil is a Linux sensor-monitoring daemon in C. It distinguishes stale data,
-non-advancing publishers and implausible measurements, maintains alarms in memory,
-and records history in PostgreSQL without making monitoring wait for the database.
-It exists to make failures observable and testable: what stopped, when it was
-detected, what history survived, and exactly what was lost.
-
-The finished core and final audit implement `PROJECT_BRIEF.pdf` v3, with the
-documented architecture/process refinements and limitations below.
-This is an original small protocol and engineering exercise. It does not reproduce
-Schneider NetBotz or A-Link. Start with the [final audit](docs/FINAL_VERIFICATION.md),
-[interview guide](docs/INTERVIEW_GUIDE.md) and [measured verification](docs/VERIFICATION.md).
+Vigil is a Linux sensor-monitoring daemon written in C. It reads classic CAN frames, tracks whether each configured source is fresh, progressing, and physically plausible, maintains live alarms in memory, and records bounded history in PostgreSQL without making monitoring wait on the database.
 
 ## Architecture
 
 ```text
-Python pods → Linux SocketCAN/vcan → main C poll loop (CAN + timerfd + signalfd)
-                                    │ decode; freshness/progress/plausibility
-                                    │ in-memory alarms; readable diagnostics
-                                    ▼ copy records under a short mutex
-                              bounded queue + alarm snapshot
-                                    ▼ persistence pthread, sole libpq owner
-                                PostgreSQL history
+sensor pods → SocketCAN/vcan → monitoring thread
+                              │
+                              ├─ decode + validate frames
+                              ├─ freshness/progress/plausibility state
+                              ├─ live alarm state
+                              └─ bounded queue
+                                      │
+                                      ▼
+                               persistence thread
+                                      │
+                                      ▼
+                                  PostgreSQL
 ```
 
-Main owns current alarms. SQL is history, not the authority for live state.
-The writer copies a batch, releases the mutex, then performs I/O with bounded
-connection/query deadlines. `systemd` runs the daemon unprivileged with readiness,
-watchdog and failure restart. [Monitoring](docs/MONITORING.md) and
-[persistence](docs/PERSISTENCE.md) define the exact contracts.
+The monitoring thread owns live state and never performs database I/O. A separate writer thread owns the PostgreSQL connection and persists copied records from a bounded queue. If PostgreSQL is unavailable, monitoring continues; retained history is bounded and dropped records are counted explicitly. Recovery backfills retained records and records a gap when known history was lost.
+
+Technical details are in [monitoring](docs/MONITORING.md), [persistence](docs/PERSISTENCE.md), and the [wire protocol](docs/PROTOCOL.md).
 
 ## Protocol
 
-Classic CAN, standard 11-bit IDs; pod IDs 1–127; two channels: temperature and door.
+Vigil uses classic CAN with standard 11-bit identifiers. Sensor frames carry a channel, signed measurement, status byte, rolling counter, and CRC-8. Heartbeats carry source state, uptime, an independent counter, and CRC-8.
 
-| ID | Payload |
-| --- | --- |
-| `0x100 + pod` | 6 bytes: channel, little-endian int16 value, status, rolling counter, CRC-8 |
-| `0x700 + pod` | 7 bytes: state, little-endian uint32 uptime, independent counter, CRC-8 |
+Validation separates several failure classes instead of treating every bad reading the same way:
 
-Temperature uses 0.01 °C; door is 0/1. CRC-8/SMBUS covers payload bytes before
-the CRC. Repeated/old counters are rejected; small forward gaps infer missing
-frames while accepting usable data. Exact lengths, validation order, counter
-ambiguity and shared C/Python fixtures: [wire protocol](docs/PROTOCOL.md).
+- **freshness** — usable data must arrive before the configured deadline;
+- **progress** — rolling counters must advance rather than repeat indefinitely;
+- **plausibility** — values must remain within the configured source rules;
+- **integrity** — frame length, identifier range, encoding, and CRC must be valid.
 
-## Linux setup and build
+A stale last-known value can remain available for diagnosis but is marked non-current and is not treated as live data.
 
-SocketCAN, vcan, timerfd, signalfd and systemd require **real Linux**.
-On Apple Silicon macOS, use the repository's Ubuntu 24.04 ARM64 Lima VM:
+## Build and run
 
-```sh
-brew install lima
-./scripts/dev up
-./scripts/dev ./scripts/verify --clean
-```
-
-The VM has 2 CPUs, 2 GiB RAM and a 12 GiB sparse disk; only this repository is
-mounted read/write. Setup installs CMake, GCC, Clang/libFuzzer, cmocka, libpq,
-PostgreSQL, libsystemd, Valgrind, can-utils and pinned Python dependencies.
-The Ubuntu image is pinned; package security updates remain enabled.
-Prefix Linux commands below with `./scripts/dev` from macOS, or use
-`./scripts/dev` to open a shell. Shared `.venv`/build outputs are Linux files.
-After reboot: `./scripts/dev ./scripts/vcan-up`. Stop VM: `limactl stop vigil`.
-Mount relocation is documented in [decisions](docs/DECISIONS.md).
-
-On native Ubuntu 24.04, run `./scripts/setup-linux`. For an individual build:
+The Linux integration path uses SocketCAN, `timerfd`, `signalfd`, PostgreSQL, pthreads, and systemd.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -74,127 +48,91 @@ cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ```
 
-## Run pods and daemon
-
-In two Linux terminals:
+For the complete Linux development environment:
 
 ```sh
-# Terminal 1: explicit monitoring-only mode
+./scripts/setup-linux
+./scripts/vcan-up
+```
+
+A monitoring-only daemon can be started with:
+
+```sh
 build/vigild --no-persistence --config config/vigil.conf
-# Terminal 2: pod 1, temperature + door + heartbeat
+```
+
+The simulator can then publish deterministic sensor traffic through SocketCAN:
+
+```sh
 .venv/bin/python -m simulator.pod
 ```
 
-Ctrl-C stops the simulator. At the default 3000 ms freshness deadline, each
-source becomes stale, its old value has `current=0`, and communication loss
-is raised on the next timer check (default 100 ms tick, plus scheduling delay).
-Restart after silence to recover. Temperature high raises at 27 °C and clears
-at 26 °C. Flat readings raise suspicion only. SIGUSR1 requests a daemon snapshot;
-SIGINT/SIGTERM cleanly stop it. Diagnostics use Linux monotonic milliseconds.
-
-Simulator options include `--pod-id 1 --pod-id 2`, `--cycles 3`, `--interval 0.1`
-and `--repeat-each-frame`. Configure pod 2 in `config/vigil.conf` before monitoring
-it. Deterministic frame injection, silence, threshold sequences and load controls
-live in the scenario harness; they use real SocketCAN.
+Persistence is enabled by default when database configuration is present. The service helpers provision a local PostgreSQL schema and an unprivileged systemd unit:
 
 ```sh
-candump -L vcan0
-build/vigil-decode 101 0098080000b7  # value=2200, counter=0
-```
-
-## PostgreSQL and supervised operation
-
-Persistence is enabled by default. An unavailable database raises degraded state
-while monitoring continues. Provision the default local peer-authenticated service:
-
-```sh
-./scripts/install-service
 ./scripts/setup-database
-./scripts/vcan-up
+./scripts/install-service
 sudo systemctl enable --now vigild
 journalctl -u vigild
 ```
 
-The installer preserves existing configuration; it does not implicitly start the
-service. `config/database.env` documents connection settings. Numeric/Unix endpoints
-keep connection deadlines bounded. Schema: `migrations/001_history.sql`.
-`--queue-capacity N` sets pending reading capacity (default 1024).
-[Persistence documentation](docs/PERSISTENCE.md) includes grants, SQL inspection,
-record semantics, timeouts and shutdown behavior.
+## Verification
 
-## Tests, evidence and interview demo
-
-Use an otherwise idle `vcan0`; stop the installed service and other simulators
-before tests. Test clusters are disposable and never stop the default/user
-PostgreSQL cluster. The systemd gate installs/removes its own temporary unit.
-Sudo is needed for network and unit setup; the daemon remains unprivileged.
+The project includes unit, integration, fault-injection, concurrency, database-contract, sanitizer, static-analysis, and fuzzing checks.
 
 ```sh
-./scripts/verify --clean        # complete gate; writes observed docs/VERIFICATION.md
-./scripts/check --clean         # C/Python, vcan, PostgreSQL, systemd, sanitizers, Helgrind
-./scripts/check-ci --clean      # exact hosted-CI command suite, no vcan/systemd dependency
-./scripts/check-release --clean # optimized build and real decoder/monitor/persistence integration
-.venv/bin/python tests/fault_scenarios.py --output artifacts/my-fault-run
+./scripts/verify --clean
+./scripts/check --clean
+./scripts/check-ci --clean
+./scripts/check-release --clean
+.venv/bin/python tests/fault_scenarios.py --output artifacts/fault-run
 .venv/bin/python tests/database_contract.py
-./scripts/fuzz 120              # libFuzzer + ASan + UBSan; saved corpus/log/crash artifacts
-./scripts/demo                 # asserted, narrated interview story with disposable DB
+./scripts/fuzz 120
 ```
 
-Each scenario prints its expectation before execution. Failure exits nonzero;
-JSON results, daemon configuration/output, timestamps and counters are retained
-in new directories under `artifacts/`. Do not reuse an output directory.
-`--scenario NAME` runs one fault case. The demo exports SQL history/checkpoints,
-showing healthy → silent/stale → return → database outage → queue drops → backfill
-and gap. [Manual CAN checklist](docs/MANUAL_CAN.md) supplements automation.
+The release verification includes:
 
-The complete gate includes 45 cmocka cases in six builds, seven Python unit
-cases, ten brief fault scenarios, and five additional hardening scenarios in
-Release/ASan/TSan. It includes decoder/daemon integration, SQL assertions, systemd SIGKILL/watchdog
-restart, GCC/Clang strict diagnostics, GCC static analysis, ASan/UBSan, TSan,
-Helgrind and a 120-second fuzz budget. TSan uses `setarch -R` for its process tree
-on the ARM64 VM; global ASLR is unchanged. [Fuzzer contract](fuzz/README.md).
+- 45 cmocka cases across six build configurations;
+- 7 Python unit cases;
+- 10 fault scenarios plus 5 hardening scenarios;
+- 5 PostgreSQL contract checks;
+- real `vcan` decoder, monitor, and persistence scenarios;
+- systemd readiness, watchdog, restart, and failure behavior;
+- GCC and Clang strict builds;
+- GCC static analysis;
+- ASan/UBSan, TSan, and Helgrind checks;
+- libFuzzer coverage of the decoder.
 
-| Evidence boundary | What it checks |
-| --- | --- |
-| GitHub Actions workflow | GCC/Clang builds; C/Python units; decoder CLI; real PostgreSQL schema/transaction/permission checks; ASan/UBSan; GCC analyzer; 10-second fuzz budget |
-| Linux-local gate | Real vcan decoder/monitor/persistence scenarios, database outages, load accounting, systemd, TSan/Helgrind, demo and longer fuzz session |
+The hosted GitHub Actions workflow runs the non-`vcan` subset: builds, C/Python tests, decoder CLI checks, PostgreSQL contracts, ASan/UBSan, GCC analysis, and a short fuzz budget. The release commit passed that hosted Linux workflow. Bus-level `vcan`, systemd supervision, TSan/Helgrind, and hardware-dependent behavior remain local-only gates.
 
-The workflow does not assume hosted runners can configure vcan. It neither skips
-a failed bus test nor substitutes a Python virtual bus. Its commands were verified
-locally first, and the hosted job has since passed on the release commit
-(`ubuntu-24.04`: 45 cmocka cases per build, seven Python cases, five of five
-PostgreSQL contracts, zero warnings and zero sanitizer/analyzer findings).
-Because that job deliberately omits vcan and systemd, **it is not evidence for the
-bus, supervision or hardware gates**, which remain Linux-local.
-Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml).
+The manual CAN checklist in [docs/MANUAL_CAN.md](docs/MANUAL_CAN.md) provides direct `can-utils` commands for inspecting frames and verifying decoder behavior outside the automated harness.
 
-## Limits and non-claims
+## Persistence behavior
 
-- Queue memory is volatile: N pending readings, 256 events and one immutable
-  in-flight batch of at most 32 records. Oldest pending records are evicted and
-  counted. The demo's capacity-four/eleven-arrival fixture has no readings in flight.
-- Database recovery backfills retained records and writes gaps only for known
-  loss. SIGKILL loses unpersisted memory. A lost COMMIT response is ambiguous;
-  some unconfirmed data may already be stored. New runs cannot reconstruct lost
-  counters/history. There is no disk spool or crash-durable queue.
-- vcan load tests measure Linux application behavior. They cannot establish CAN
-  arbitration, bitrate limits, electrical behavior, wiring quality or bus-off
-  recovery. The burst test disables persistence; it is not a database-throughput claim.
-- CRC/counters do not authenticate a sender. Large sequence gaps and old replays
-  across wraps are ambiguous. Stable readings are not proof of failed sensors.
-- Rate plausibility uses receive time: scheduler batching can create apparent
-  spikes and reject otherwise reasonable samples.
-- No hard real-time or production-capacity guarantee. Diagnostic regular-file
-  output may block; full diagnostic pipes drop counted lines. PostgreSQL/storage
-  determine the durability of committed rows. Network deadlines do not bound
-  local libpq credential/certificate file stalls or arbitrary scheduler delays.
-- No hardware validation, NetBotz/A-Link compatibility, dashboard/API, authenticated
-  CAN, on-disk spool or Buildroot extension is included.
+The queue is intentionally bounded. When a database outage lasts longer than available queue capacity, the oldest pending history is evicted and the loss is counted rather than allowing memory growth to become unbounded. An immutable in-flight batch prevents the writer from silently replacing a transaction whose commit result is still uncertain.
 
-Use the [interview guide](docs/INTERVIEW_GUIDE.md) to demonstrate the project and
-the [resume evidence](docs/RESUME_EVIDENCE.md) to choose defensible claims.
-Study the [learning guide](docs/LEARNING_GUIDE.md), then `src/monitor.c`,
-`src/queue.c` and `src/persistence.c`. [Decisions](docs/DECISIONS.md) record brief
-refinements. [State](CODEX_STATE.md) records the completed checkpoint and boundary.
-Earlier evidence: [1](docs/CHECKPOINT_1_VERIFICATION.md),
-[2](docs/CHECKPOINT_2_VERIFICATION.md), [3](docs/CHECKPOINT_3_VERIFICATION.md).
+Writes use stable run/batch identities so reconnect and retry behavior can distinguish known retries from new history. PostgreSQL remains a historical store; live alarm state does not depend on a successful query.
+
+## Failure model
+
+Vigil is designed to make common monitoring failures visible:
+
+- a source stops transmitting;
+- a publisher repeats old counters;
+- a measurement becomes implausible;
+- malformed or corrupt frames arrive;
+- PostgreSQL becomes unavailable;
+- the persistence queue fills;
+- the service crashes or stops making watchdog progress.
+
+The daemon reports these conditions without turning historical storage into the authority for current sensor health.
+
+## Limits
+
+- Local bus integration uses `vcan`; it does not establish physical CAN timing, arbitration, wiring quality, bus-off recovery, or electrical behavior.
+- The in-memory persistence queue is bounded but not crash-durable. A process crash can lose records that have not reached PostgreSQL.
+- CRC and rolling counters detect corruption and some replay/stall conditions, but they do not authenticate senders.
+- Large sequence gaps and wrap-around cases are inherently ambiguous without a stronger protocol.
+- Receive-time plausibility rules can be affected by scheduler batching.
+- The system is not a hard real-time implementation and does not claim production-capacity limits from local benchmarks.
+- No dashboard/API, authenticated CAN, disk spool, or hardware-board validation is included in this release.
