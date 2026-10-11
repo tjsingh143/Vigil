@@ -41,6 +41,10 @@ A stale last-known value can remain available for diagnosis but is marked non-cu
 ## Build and run
 
 The Linux integration path uses SocketCAN, `timerfd`, `signalfd`, PostgreSQL, pthreads, and systemd.
+Build prerequisites include CMake, a C compiler, pkg-config, and development
+libraries for PostgreSQL, systemd, and cmocka. `./scripts/setup-linux` installs
+the development environment on the supported Debian/Ubuntu path.
+The [verification guide](docs/VERIFICATION.md) separates hosted and local gates.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -136,3 +140,13 @@ The daemon reports these conditions without turning historical storage into the 
 - Receive-time plausibility rules can be affected by scheduler batching.
 - The system is not a hard real-time implementation and does not claim production-capacity limits from local benchmarks.
 - No dashboard/API, authenticated CAN, disk spool, or hardware-board validation is included in this release.
+
+## Code excerpts
+
+[Verified code excerpts](docs/CODE_SAMPLES.md) provide direct source links for the main implementation boundaries.
+
+## Review material
+
+[Project portfolio](https://drive.google.com/drive/folders/1kzVJFzVXg2qrh3Uyq7s1tRkmlH5Cwl3t) contains the project overview, architecture,
+code examples, testing notes, and supporting evidence. Portfolio measurements
+retain their stated snapshot and verification boundaries.
