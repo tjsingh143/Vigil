@@ -150,3 +150,5 @@ The daemon reports these conditions without turning historical storage into the 
 [Project portfolio](https://drive.google.com/drive/folders/1kzVJFzVXg2qrh3Uyq7s1tRkmlH5Cwl3t) contains the project overview, architecture,
 code examples, testing notes, and supporting evidence. Portfolio measurements
 retain their stated snapshot and verification boundaries.
+
+[Review entry point](https://drive.google.com/file/d/1y-OnH_hf6DHMCPmKEhJKxzw-7EbS-kI3/view?usp=drivesdk) · [Overview](https://drive.google.com/file/d/1tEWgz8IWl19ZkqSTEGRgY-Vz6tb-LFFO/view?usp=drivesdk) · [Testing](https://drive.google.com/file/d/1LA_r6cO71KDWW-JSgDHIpf1H1c-O2pvk/view?usp=drivesdk) · [Code samples](https://drive.google.com/file/d/1xRuJ0U_Lqk9hvBxtRnMI7BvbeReI3dP-/view?usp=drivesdk)
