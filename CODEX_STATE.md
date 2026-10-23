@@ -1,4 +1,13 @@
-# Vigil state — FINAL/COMPLETE
+# Current work — Resilience Stage 0 audit
+
+The owner authorized a documentation-only baseline audit on 2026-10-22.
+Current stage evidence, blockers and stop boundary live in
+[docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md); source integration and
+failure contracts live in [docs/RESILIENCE_BASELINE.md](docs/RESILIENCE_BASELINE.md).
+No SQLite, daemon or PostgreSQL schema implementation is authorized. The
+completed release record below remains historical and is preserved.
+
+# Vigil state — FINAL/COMPLETE (original core release)
 
 Checkpoint 5 and the Vigil 1.0 core release are complete. The final clean Linux
 release gate passed on 2026-09-28 UTC. One Codex agent performed all work;

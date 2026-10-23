@@ -513,3 +513,19 @@ relevant functions, run the demo and reconcile its exported SQL with counters.
 Then change a timeout in a disposable test config and predict the effect before
 running it. Understanding this agent-authored implementation is personal work;
 the successful automated tests cannot certify the owner's understanding.
+
+## Resilience Stage 0 — distinguish the acknowledgement boundaries
+
+The [baseline audit](RESILIENCE_BASELINE.md) traces the existing implementation
+and records fresh verification separately from the release evidence. Queue
+publication, removal into a writer-owned batch, PostgreSQL commit and client
+confirmation are different boundaries. None currently commits local durable
+state. A batch ledger can prevent a duplicate retry while its payload survives;
+it cannot recover a payload or identity that vanished with the process.
+
+Before designing an outbox, trace a crash at each boundary on paper. Preserve
+the original observation/run identity when discussing replay; keep new live
+sensor state unknown until new traffic arrives. Explain separately what a
+SIGKILL fixture establishes and what host power-loss/storage testing would
+need to establish. The audit authorizes no implementation; current scope is
+recorded in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
