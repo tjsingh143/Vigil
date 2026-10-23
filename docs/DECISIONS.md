@@ -383,3 +383,50 @@ The final release run and optional extension disposition are recorded in
 [FINAL_VERIFICATION.md](FINAL_VERIFICATION.md), with generated core measurements
 in [VERIFICATION.md](VERIFICATION.md). The original owner-first coding process
 deviation and queue/in-flight/libpq refinements remain explicit.
+
+## Resilience Stage 1 — local outbox (2026-10-22)
+
+The owner explicitly authorized the SQLite durable-outbox implementation,
+daemon/service configuration integration, fault tests and a safe local commit.
+This supersedes Stage 0B's proposed module-only slice. One Codex agent performed
+all work; no delegation. The brief and required documentation were read in full;
+main was clean at 2bc113b. The original Release gate passed on an archived copy
+before edits, including all original PG integration scenarios. The owner-first
+coding process deviation from the brief remains explicit.
+
+The new owner worker performs all SQLite/directory-sync work; main keeps live
+alarms, CAN/timer/signals and watchdog ownership. Queue tickets are volatile;
+transactional sequences and complete frozen format2 batches become durable only
+after FULL/WAL and directory sync. The worker enforces signed allocator bounds,
+exact schema/JSON/cross-row validation, native ext4/XFS, file ownership/modes and
+exclusive ownership. Uncertain writes retain the immutable candidate and recover
+through a real generation-changing FULL transaction before publishing success.
+
+No PostgreSQL worker/replay/retirement or migration 002 was implemented. All
+local batches remain pending, remote-written counters stay zero and degraded
+remains raised. This explicit intermediate behavior avoids retiring data through
+the v1 function, which cannot verify content/origin. Existing v1 migration and
+its original database contracts remain unchanged. The full remote contract is
+reserved for Stage 2, which is not authorized by this checkpoint.
+
+CMake requires SQLite >=3.51.3; scoped provisioning verifies the official source
+hash and installs an isolated dependency under /opt without replacing distro
+SQLite. Foreground/service outboxes require explicit empty-directory bootstrap;
+normal startup never initializes missing history. The service gains only its
+private writable StateDirectory and a 30-second startup allowance. Production
+services/data were not deployed or changed; tests use disposable stores, mounts,
+clusters and a temporary unprivileged hardened unit.
+
+The current clean gate replaces obsolete PG-outage queue-fill assumptions with
+local admission/capacity/crash assertions while preserving original monitoring,
+protocol, queue, Python, vcan/load/fuzz/manual and standalone v1 SQL contracts.
+Original PG tests/demo/verifier remain historical fixtures for the archived
+pre-outbox binary. OUTBOX.md explains current operation and acceptance limits;
+RESILIENCE_STATE.md records actual final evidence and stop boundary.
+
+Final review made checkpoint freezing a store invariant: failed checkpoints
+block all later mutations even below the WAL trigger and during shutdown or
+recovery. A VFS test holds only the checkpoint lock busy, leaving the writer
+lock available, proving the append refusal and unchanged usage/allocators.
+The final clean Linux gate passed all 55 commands/240 C case executions;
+RESILIENCE_STATE.md records the final source digest and raw evidence.

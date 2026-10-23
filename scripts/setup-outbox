@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux && $# -le 1 ]] || { echo 'usage: scripts/setup-outbox [ABSOLUTE_PATH]' >&2; exit 2; }
+[[ -x build/vigil-outbox-init ]] || { echo 'Build vigil-outbox-init first.' >&2; exit 2; }
+if [[ $# == 0 ]]; then
+    # Explicit provisioning only. Never initializes over existing history.
+    id vigil >/dev/null
+    sudo install -d -o vigil -g vigil -m 0700 /var/lib/vigil
+    exec sudo -u vigil build/vigil-outbox-init /var/lib/vigil/outbox.sqlite3
+fi
+[[ $1 == /* ]] || { echo 'Absolute path required.' >&2; exit 2; }
+[[ -d $(dirname -- "$1") ]] || mkdir -m 0700 -- "$(dirname -- "$1")"
+exec build/vigil-outbox-init "$1"

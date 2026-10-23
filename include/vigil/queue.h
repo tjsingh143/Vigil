@@ -20,6 +20,14 @@ struct vigil_record {
 struct vigil_queue_stats {
     uint64_t readings_queued, events_queued, records_written, readings_written;
     uint64_t readings_dropped, events_dropped, first_drop_ms, last_drop_ms;
+    uint64_t readings_evicted, events_evicted, readings_rejected, events_rejected;
+    uint64_t closed_readings, closed_events;
+    uint64_t locally_committed, locally_committed_readings, local_failures;
+    uint64_t durable_records, durable_batches, durable_bytes, spool_admitted, spool_retired;
+    uint64_t local_revision, local_reading_drops, local_event_drops;
+    unsigned local_state;
+    int sqlite_error;
+    bool local_mode, local_ready, count_exact;
     uint64_t acknowledged_reading_drops, acknowledged_event_drops;
     uint64_t connection_failures, query_failures, connections, reconnects;
     uint64_t outage_started_ms, outage_total_ms, last_outage_ms, outages;
@@ -48,7 +56,10 @@ struct vigil_queue {
  * All shared fields are accessed under mutex; no I/O in these operations. */
 bool vigil_queue_init(struct vigil_queue *q, size_t capacity);
 void vigil_queue_destroy(struct vigil_queue *q); /* after writer joined */
-void vigil_queue_push(struct vigil_queue *q, struct vigil_record record);
+enum vigil_queue_result { VIGIL_QUEUED, VIGIL_QUEUED_EVICTED, VIGIL_CLOSED, VIGIL_RESOURCE_REJECTED };
+enum vigil_queue_result vigil_queue_push(struct vigil_queue *q, struct vigil_record record);
+struct vigil_capture;
+void vigil_queue_take_local(struct vigil_queue *q, struct vigil_capture *capture);
 size_t vigil_queue_take(struct vigil_queue *q, struct vigil_record out[VIGIL_BATCH_SIZE]);
 void vigil_queue_ack(struct vigil_queue *q);
 void vigil_queue_stats(struct vigil_queue *q, struct vigil_queue_stats *out);
@@ -58,6 +69,11 @@ void vigil_queue_publish(struct vigil_queue *q, const struct vigil_record *alarm
 struct vigil_persistence_health { uint64_t reading_drops_seen, event_drops_seen; };
 bool vigil_persistence_degraded(struct vigil_persistence_health *health,
     const struct vigil_queue_stats *stats, bool was_degraded, uint64_t published_revision);
+/* Shared-state lock wrappers also enforce that this caller holds no queue
+ * lock at a storage I/O boundary (other threads may independently enqueue). */
+void vigil_queue_lock(struct vigil_queue *q);
+void vigil_queue_unlock(struct vigil_queue *q);
+void vigil_queue_assert_io(void);
 uint64_t vigil_now_ms(void);
 uint64_t vigil_utc_ms(void);
 #endif

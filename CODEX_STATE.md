@@ -1,17 +1,40 @@
-# Current work — Resilience Stage 0B design complete
+# Current work — Resilience Stage 1 local outbox
 
-The owner authorized documentation-only architecture finalization on 2026-10-22.
-Current acceptance, evidence and stop boundary live in
-[docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md). The normative future
-[failure contract](docs/RESILIENCE_CONTRACT.md) and
-[architecture](docs/RESILIENCE_ARCHITECTURE.md) specify separate SQLite/PG
-workers, immutable durable batches, original-run identities, verified replay,
-bounds and T01–T20 acceptance tests. Stage 0 evidence/hash was reconciled;
-no new runtime gate or resilience test ran. Technical design review is complete,
-owner approval is not inferred, and Stage 1 awaits explicit authorization.
-No SQLite, daemon, migration, unit or test implementation changed. Preserve
-the local audited base instead of upstream documentation deletions. The
-completed release record below remains historical and is preserved.
+The owner authorized SQLite local durability, daemon/service configuration,
+recovery/fault tests and a safe local commit. This supersedes Stage 0B's proposed
+module-only scope. One Codex agent; no delegation. Work started on clean main at
+`2bc113b`. No deployment, production-data change, push or publication.
+
+The dedicated SQLite owner and explicit bootstrap now implement bounded local
+admission, WAL/FULL + directory sync, stable transactional identity, reopening,
+local/volatile accounting and failure degradation. Main retains live monitoring
+and alarms with no SQLite I/O. PostgreSQL replay/verification/retirement and
+migration 002 are not implemented; durable backlog remains pending and degraded
+stays active. Current operation: [docs/OUTBOX.md](docs/OUTBOX.md). Evidence and
+final status: [docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md).
+
+The final complete clean Stage 1 gate passed all 55 commands, 2026-10-23
+09:24:59–09:29:53 UTC, at `artifacts/resilience-stage1/final/`.
+Four builds each passed 60 C cases (240 executions); seven Python cases,
+five v1 PG contracts, real vcan/monitor/load/manual tests, 130 transaction/origin
+SIGKILLs, 199 direct DB/WAL inventories, real ext4 FULL/read-only, unprivileged
+systemd crash/watchdog, ASan/UBSan/TSan, scoped Helgrind, analyzer and fuzz passed.
+Debug preserved 160 postcommit test readings across 20 kills; silence alarm ages
+were 506 ms for a 500 ms deadline; full-storage shutdown was 1.027906 s.
+Natural load accounted 48047 received + 1954 kernel drops = 50001 sends;
+forced overflow accounted 223 + 49778. No physical/sustained throughput claim.
+Decoder fuzzer: 93210029 inputs, reported 121 s, RSS 302 MiB, no finding.
+The final review fixed checkpoint freeze across shutdown/recovery and added
+its VFS fault case. Other defects, earlier attempts and limitations are in state.
+Implementation SHA-256:
+`706261f8fdf7f2302b185bf0ac26b0891ec71f14222c03276d63298dcf3019a2`.
+The native source `/tmp/vigil-stage1-final-source` has the same digest; tested
+parent is 2bc113b. Original Release baseline passed before edits. Final native
+DB/WAL evidence is also archived under the final artifact root. Reviewed local
+commit identity is `git log -1 --oneline`. No default service/production data was
+changed; no test unit/mount/daemon remains. Historical core records follow.
+
+**Stop after Stage 1. Do not start Stage 2.**
 
 # Vigil state — FINAL/COMPLETE (original core release)
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+[[ $(uname -s) == Linux ]] || { echo 'Use ./scripts/dev ./scripts/check-resilience' >&2; exit 2; }
+exec .venv/bin/python tests/verify_resilience.py "$@"

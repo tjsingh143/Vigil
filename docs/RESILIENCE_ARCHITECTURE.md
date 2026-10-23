@@ -1,9 +1,11 @@
 # Vigil Resilience architecture — Stage 0B
 
-Design version 1, 2026-10-22 America/Los_Angeles. **Specified, not implemented.**
+Design version 1, 2026-10-22 America/Los_Angeles. **Full architecture target.**
+Stage 1 local implementation/status: [OUTBOX.md](OUTBOX.md),
+[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Remote sections remain future work.
 The normative failure meanings and acceptance tests are in
 [RESILIENCE_CONTRACT.md](RESILIENCE_CONTRACT.md); actual baseline evidence is in
-[RESILIENCE_BASELINE.md](RESILIENCE_BASELINE.md). No Stage 1 work is authorized.
+[RESILIENCE_BASELINE.md](RESILIENCE_BASELINE.md). The owner subsequently authorized Stage 1 implementation and daemon integration.
 
 ## Source basis and scope
 
@@ -436,3 +438,19 @@ tests and build dependency only; preserve the original daemon until a later
 explicitly authorized integration checkpoint. All wire, API/dashboard, hardware,
 Buildroot, authentication, remote retention and live-state restoration remain
 outside this resilience design.
+
+## Stage 1 scope amendment
+
+The owner's Stage 1 request explicitly broadened the earlier module-only slice
+to daemon CLI/status, initial snapshot, shutdown, service configuration and real
+process-kill tests. This supersedes the earlier narrow slice and stop wording.
+The SQLite owner is the only persistence worker in this stage. PG work slots,
+replay, receipts, migration 002 and retirement remain unimplemented. No v1 send
+fallback is retained. This preserves original live monitoring while every local
+batch remains pending and persistence-degraded stays raised for deferred remote
+history. The schema includes retirement columns at zero and rejects nonzero
+retirement on Stage 1 open; a future compatible implementation must add verified
+retirement before using them. An additional immutable-origin trigger and exact
+schema validation strengthen the specified identity constraints. Current code
+and test entrypoints are documented in OUTBOX.md; historical release evidence
+and original PG scenarios are retained separately.

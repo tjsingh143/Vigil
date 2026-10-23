@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Isolated, source-verified dependency; does not replace distribution SQLite.
+set -euo pipefail
+[[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 2; }
+prefix=/opt/vigil-sqlite-3.51.3
+if [[ -x $prefix/bin/sqlite3 ]] && [[ $($prefix/bin/sqlite3 --version) == 3.51.3* ]]; then
+    exit 0
+fi
+task_dir=$(mktemp -d /tmp/vigil-sqlite-build-XXXXXXXX)
+trap 'rm -rf -- "$task_dir"' EXIT
+curl --fail --location --silent --show-error https://www.sqlite.org/2026/sqlite-autoconf-3510300.tar.gz -o "$task_dir/source.tar.gz"
+tar -xzf "$task_dir/source.tar.gz" -C "$task_dir"
+python3 - "$task_dir/sqlite-autoconf-3510300/sqlite3.c" <<'PY'
+import hashlib, sys
+expected = '32d5424f97e0a7fc5ed2f6335afbb58be4e0298bd7117a34e39d345ff13d859e'
+assert hashlib.sha3_256(open(sys.argv[1], 'rb').read()).hexdigest() == expected, 'SQLite source mismatch'
+PY
+cd "$task_dir/sqlite-autoconf-3510300"
+./configure --prefix="$prefix" --disable-readline
+make -j2
+sudo make install

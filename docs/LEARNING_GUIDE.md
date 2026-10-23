@@ -1,5 +1,9 @@
 # Understanding the finished Vigil core
 
+The original-core explanations below retain their historical checkpoint context.
+Current persistence is the [Stage 1 SQLite outbox](OUTBOX.md), explained in the
+final section of this guide; PostgreSQL replay remains deferred.
+
 ## What exists today
 
 A Python program pretends to be one or two sensor pods and sends CAN frames
@@ -546,3 +550,44 @@ alarm, and why WAL mode without successful FULL/directory sync is insufficient.
 Design completion is not implementation or passing fault-test evidence; Stage 1
 is still unauthorized. The original core and its volatile crash limits above
 remain unchanged.
+
+## Resilience Stage 1 — trace local durability
+
+Start with [OUTBOX.md](OUTBOX.md). Main publishes a RAM ticket; the SQLite owner
+atomically copies at most 32 records, counters and a complete alarm snapshot
+under the queue lock. After unlocking, it validates/serializes and begins a
+transaction. One commit allocates durable sequence/batch/order IDs, freezes
+payload bytes, captures losses/revision and updates usage. FULL/WAL plus parent
+directory sync precede publishing the held-to-durable transfer. Main owns every
+live alarm throughout; recovered history never refreshes a source.
+
+Follow queue.c:take_local → persistence.c:writer → outbox.c:append. Explain why
+a failed COMMIT or sync is not proof of absence. The pinned payload and identity
+are compared on reopen; a recovery_generation increment forces a new FULL
+barrier before status may report the recovered commit. Show atomic rollback
+and complete recovered DB/WAL payloads in the tests, not just a daemon log.
+
+The 256-event reserve protects only volatile event slots. Durable events and
+readings share record/batch/byte limits, so events can also be blocked at full
+capacity. Old durable history cannot be evicted. A held candidate is still
+volatile; new pending records can be evicted behind it. On shutdown, count only
+volatile pending/held as abandoned; durable backlog remains deferred.
+
+Work these cuts on paper: kill before BEGIN; kill after INSERT before COMMIT;
+kill after commit/directory sync but before publication; fail xSync after SQLite
+has written commit frames. Predict which inventory can survive and which status
+must not claim durability. Then run the token-handshaked Linux tests and compare
+exact run/sequence/payload bytes. A process kill is not a power cut.
+
+There is no Stage 2 sender or retirement yet. Explain why records_written stays
+zero, degraded stays active, and the spool eventually fills. The old 1.0 PG demo
+and call-path map above describe the historical implementation. Do not claim
+that migration 001 proves cross-process replay or that owner-authored learning
+has been demonstrated by an agent's passing tests.
+
+For checkpoint failures, trace outbox.c:mutation_ready and the checkpoint_blocked
+flag. A coordinator's retry loop alone is insufficient: shutdown can leave that
+loop while its drain budget remains. The store itself must refuse the next
+mutation until truncate checkpoint and directory sync succeed. The new VFS test
+leaves the writer lock usable while holding the checkpoint lock busy, so an
+incorrect implementation would really append and fail the usage assertion.

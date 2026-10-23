@@ -3,198 +3,148 @@
 [![Linux build, contracts and fuzz](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml/badge.svg)](https://github.com/tjsingh143/Vigil/actions/workflows/ci.yml)
 
 Vigil is a Linux sensor-monitoring daemon in C. It distinguishes stale data,
-non-advancing publishers and implausible measurements, maintains alarms in memory,
-and records history in PostgreSQL without making monitoring wait for the database.
-It exists to make failures observable and testable: what stopped, when it was
-detected, what history survived, and exactly what was lost.
+non-advancing publishers and implausible measurements, keeps live alarms in
+memory, and admits history to a bounded SQLite durable outbox without storage
+I/O in its CAN monitoring thread.
 
-The finished core and final audit implement `PROJECT_BRIEF.pdf` v3, with the
-documented architecture/process refinements and limitations below.
-This is an original small protocol and engineering exercise. It does not reproduce
-Schneider NetBotz or A-Link. Start with the [final audit](docs/FINAL_VERIFICATION.md),
-[interview guide](docs/INTERVIEW_GUIDE.md) and [measured verification](docs/VERIFICATION.md).
-
-## Architecture
+**Resilience Stage 1: local durability and restart recovery.** PostgreSQL replay,
+content verification and local retirement await Stage 2. Nothing is sent to PG
+by the current daemon. Durable history accumulates until one local limit is
+reached; persistence-degraded stays raised while remote history is deferred.
+The [local outbox contract](docs/OUTBOX.md) describes current operation;
+[resilience state](docs/RESILIENCE_STATE.md) records evidence and the stop boundary.
+The [failure contract](docs/RESILIENCE_CONTRACT.md) and
+[architecture](docs/RESILIENCE_ARCHITECTURE.md) distinguish implemented local
+behavior from planned remote reconciliation.
 
 ```text
-Python pods → Linux SocketCAN/vcan → main C poll loop (CAN + timerfd + signalfd)
-                                    │ decode; freshness/progress/plausibility
-                                    │ in-memory alarms; readable diagnostics
-                                    ▼ copy records under a short mutex
-                              bounded queue + alarm snapshot
-                                    ▼ persistence pthread, sole libpq owner
-                                PostgreSQL history
+Python pods → real Linux SocketCAN/vcan → main CAN/timerfd/signalfd poll loop
+                                         │ decode; freshness/progress/plausibility
+                                         │ current in-memory alarms
+                                         ▼ bounded copies, short queue mutex
+                                 N readings + 256 reserved events
+                                         ▼ one SQLite owner pthread
+                                 immutable WAL/FULL outbox batches
+                                         │ locally committed history survives restart
+                                         └ PostgreSQL replay: deferred to Stage 2
 ```
 
-Main owns current alarms. SQL is history, not the authority for live state.
-The writer copies a batch, releases the mutex, then performs I/O with bounded
-connection/query deadlines. `systemd` runs the daemon unprivileged with readiness,
-watchdog and failure restart. [Monitoring](docs/MONITORING.md) and
-[persistence](docs/PERSISTENCE.md) define the exact contracts.
+Queue publication and a held batch are volatile. A successful SQLite FULL
+commit plus parent-directory fsync establishes local durability. Older durable
+history is never evicted to admit new records. Recovery preserves original
+run/event identity, order and payload; it never restores live sensor state.
+No power-cut or physical-CAN qualification is claimed.
 
-## Protocol
+## Linux setup and build
 
-Classic CAN, standard 11-bit IDs; pod IDs 1–127; two channels: temperature and door.
+Use real Linux for SocketCAN, timerfd, signalfd and systemd. On Apple Silicon,
+use the repository's Ubuntu ARM64 Lima VM:
+
+```sh
+brew install lima
+./scripts/dev up
+./scripts/dev ./scripts/verify --clean --output artifacts/my-stage1-gate
+```
+
+Setup provisions build/test dependencies and an isolated, source-verified
+SQLite 3.51.3 under `/opt/vigil-sqlite-3.51.3`; distribution SQLite is preserved.
+The minimum version includes SQLite's WAL-reset fix. Native Ubuntu users run
+`scripts/setup-linux`. The VM has 2 CPUs, 2 GiB RAM and a 12 GiB sparse disk;
+only the repository is mounted read/write. **Outboxes must use native Linux
+ext4/XFS, not the macOS repository share or tmpfs.**
+
+```sh
+# Linux commands; prefix with ./scripts/dev from macOS.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+./scripts/setup-outbox /tmp/my-vigil-state/outbox.sqlite3
+build/vigild --config config/vigil.conf --outbox-path /tmp/my-vigil-state/outbox.sqlite3
+# In another Linux terminal:
+.venv/bin/python -m simulator.pod
+```
+
+Initialization requires an empty private directory and at least 2 GiB available.
+Normal startup requires the existing store; it never silently creates new
+history. Use `build/vigild --no-persistence` for explicit monitoring-only mode.
+This mode creates no store or worker. `--interface`, `--config`,
+`--queue-capacity N` (1..65536, default 1024), and signals retain their behavior.
+SIGUSR1 requests status; SIGINT/SIGTERM give local admission a one-second drain
+budget, join the worker and report remaining volatile abandonment separately
+from durable backlog. Kernel storage stalls can exceed that application budget.
+
+## Protocol and monitoring
+
+Classic CAN, standard 11-bit IDs; pods 1–127; temperature and door channels.
 
 | ID | Payload |
 | --- | --- |
 | `0x100 + pod` | 6 bytes: channel, little-endian int16 value, status, rolling counter, CRC-8 |
 | `0x700 + pod` | 7 bytes: state, little-endian uint32 uptime, independent counter, CRC-8 |
 
-Temperature uses 0.01 °C; door is 0/1. CRC-8/SMBUS covers payload bytes before
-the CRC. Repeated/old counters are rejected; small forward gaps infer missing
-frames while accepting usable data. Exact lengths, validation order, counter
-ambiguity and shared C/Python fixtures: [wire protocol](docs/PROTOCOL.md).
+Temperature uses 0.01 °C; door is 0/1. CRC-8/SMBUS and rolling counters detect
+anomalies; they do not authenticate senders. Exact decoding, fixtures and
+counter ambiguity are in [PROTOCOL.md](docs/PROTOCOL.md). Wire behavior is
+unchanged by Stage 1.
 
-## Linux setup and build
+Freshness, progress and plausibility stay separate. A stale value is never
+shown as current; a heartbeat cannot refresh a quiet channel. High alarms use
+hysteresis; invalid/stale data cannot clear a high alarm. Flat values are
+suspicious, not proof of failure. Receive-time rate checks can reject batched
+samples after scheduler stalls. [Monitoring policy](docs/MONITORING.md).
 
-SocketCAN, vcan, timerfd, signalfd and systemd require **real Linux**.
-On Apple Silicon macOS, use the repository's Ubuntu 24.04 ARM64 Lima VM:
+## Capacity, failures and service
 
-```sh
-brew install lima
-./scripts/dev up
-./scripts/dev ./scripts/verify --clean
-```
+Volatile ingestion has N reading slots, a separate 256-event reserve and one
+held batch of at most 32 records. Full RAM lanes evict their oldest pending
+record and count the loss. Durable capacity is 65536 total records, 4096
+batches and 64 MiB of payload, with no durable eviction or disk event reserve.
+Database/WAL/SHM physical limits and checkpoint policy are separate from payload
+capacity. FULL/BUSY/READONLY and transient failures retain a bounded candidate
+and pace retries while monitoring continues. Corrupt/inconsistent state fails
+closed; no automatic reset, sidecar deletion or repair exists.
 
-The VM has 2 CPUs, 2 GiB RAM and a 12 GiB sparse disk; only this repository is
-mounted read/write. Setup installs CMake, GCC, Clang/libFuzzer, cmocka, libpq,
-PostgreSQL, libsystemd, Valgrind, can-utils and pinned Python dependencies.
-The Ubuntu image is pinned; package security updates remain enabled.
-Prefix Linux commands below with `./scripts/dev` from macOS, or use
-`./scripts/dev` to open a shell. Shared `.venv`/build outputs are Linux files.
-After reboot: `./scripts/dev ./scripts/vcan-up`. Stop VM: `limactl stop vigil`.
-Mount relocation is documented in [decisions](docs/DECISIONS.md).
+The unit remains unprivileged with Type=notify and a main-loop watchdog.
+`StateDirectory=vigil` supplies mode 0700 state; DB/sidecars/lock use 0600.
+Readiness requires validated local storage. An explicitly authorized service
+installation uses `scripts/install-service`, then `scripts/setup-outbox` with
+no path, separate CAN setup, and explicit start/enable. No default service or
+user database is changed by the tests. [Operation/details](docs/OUTBOX.md).
 
-On native Ubuntu 24.04, run `./scripts/setup-linux`. For an individual build:
+## Tests and evidence
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel 2
-ctest --test-dir build --output-on-failure
-```
-
-## Run pods and daemon
-
-In two Linux terminals:
-
-```sh
-# Terminal 1: explicit monitoring-only mode
-build/vigild --no-persistence --config config/vigil.conf
-# Terminal 2: pod 1, temperature + door + heartbeat
-.venv/bin/python -m simulator.pod
-```
-
-Ctrl-C stops the simulator. At the default 3000 ms freshness deadline, each
-source becomes stale, its old value has `current=0`, and communication loss
-is raised on the next timer check (default 100 ms tick, plus scheduling delay).
-Restart after silence to recover. Temperature high raises at 27 °C and clears
-at 26 °C. Flat readings raise suspicion only. SIGUSR1 requests a daemon snapshot;
-SIGINT/SIGTERM cleanly stop it. Diagnostics use Linux monotonic milliseconds.
-
-Simulator options include `--pod-id 1 --pod-id 2`, `--cycles 3`, `--interval 0.1`
-and `--repeat-each-frame`. Configure pod 2 in `config/vigil.conf` before monitoring
-it. Deterministic frame injection, silence, threshold sequences and load controls
-live in the scenario harness; they use real SocketCAN.
+Use an otherwise idle vcan0. Tests create disposable outboxes, PostgreSQL
+clusters, ext4 loop mounts and a temporary systemd unit; they never target a
+developer's actual SQLite or PG data. Sudo is needed for network/mount/unit
+setup; the daemon remains unprivileged.
 
 ```sh
-candump -L vcan0
-build/vigil-decode 101 0098080000b7  # value=2200, counter=0
+./scripts/check-resilience --clean --output artifacts/my-stage1-gate
+./scripts/check-ci --clean      # hosted subset: no vcan/systemd dependency
+./scripts/check-release --clean # optimized units + vcan/monitor/local recovery
+.venv/bin/python tests/database_contract.py # original PG v1 schema, unchanged
 ```
 
-## PostgreSQL and supervised operation
+The Stage 1 gate includes strict GCC/Clang builds, 60 C cases per build, seven
+Python cases, genuine vcan monitoring, deterministic SIGKILL cuts, byte/identity
+comparisons against recovered DB/WAL, capacity/accounting/capture races, real
+ENOSPC/read-only storage, hardened supervision, sanitizers, Helgrind, GCC analyzer,
+manual can-utils exchange, finite receive-load accounting and decoder fuzzing.
+Expectations precede execution. gate.json records exact commands, exits and
+implementation digest; logs and native DB/WAL inventories retain raw evidence.
+Production binaries exclude the test fault dispatcher and VFS.
 
-Persistence is enabled by default. An unavailable database raises degraded state
-while monitoring continues. Provision the default local peer-authenticated service:
+The [original 1.0 release audit](docs/FINAL_VERIFICATION.md),
+[original measured report](docs/VERIFICATION.md),
+[interview demo](docs/INTERVIEW_GUIDE.md) and legacy PG scenarios remain historical
+records for the pre-outbox implementation. Their PG backfill/volatile-crash-loss
+expectations do not describe Stage 1. The hosted badge covers the published
+1.0 revision until this local checkpoint is explicitly published; no new hosted
+CI run is claimed. CI configuration now provisions the SQLite dependency.
 
-```sh
-./scripts/install-service
-./scripts/setup-database
-./scripts/vcan-up
-sudo systemctl enable --now vigild
-journalctl -u vigild
-```
-
-The installer preserves existing configuration; it does not implicitly start the
-service. `config/database.env` documents connection settings. Numeric/Unix endpoints
-keep connection deadlines bounded. Schema: `migrations/001_history.sql`.
-`--queue-capacity N` sets pending reading capacity (default 1024).
-[Persistence documentation](docs/PERSISTENCE.md) includes grants, SQL inspection,
-record semantics, timeouts and shutdown behavior.
-
-## Tests, evidence and interview demo
-
-Use an otherwise idle `vcan0`; stop the installed service and other simulators
-before tests. Test clusters are disposable and never stop the default/user
-PostgreSQL cluster. The systemd gate installs/removes its own temporary unit.
-Sudo is needed for network and unit setup; the daemon remains unprivileged.
-
-```sh
-./scripts/verify --clean        # complete gate; writes observed docs/VERIFICATION.md
-./scripts/check --clean         # C/Python, vcan, PostgreSQL, systemd, sanitizers, Helgrind
-./scripts/check-ci --clean      # exact hosted-CI command suite, no vcan/systemd dependency
-./scripts/check-release --clean # optimized build and real decoder/monitor/persistence integration
-.venv/bin/python tests/fault_scenarios.py --output artifacts/my-fault-run
-.venv/bin/python tests/database_contract.py
-./scripts/fuzz 120              # libFuzzer + ASan + UBSan; saved corpus/log/crash artifacts
-./scripts/demo                 # asserted, narrated interview story with disposable DB
-```
-
-Each scenario prints its expectation before execution. Failure exits nonzero;
-JSON results, daemon configuration/output, timestamps and counters are retained
-in new directories under `artifacts/`. Do not reuse an output directory.
-`--scenario NAME` runs one fault case. The demo exports SQL history/checkpoints,
-showing healthy → silent/stale → return → database outage → queue drops → backfill
-and gap. [Manual CAN checklist](docs/MANUAL_CAN.md) supplements automation.
-
-The complete gate includes 45 cmocka cases in six builds, seven Python unit
-cases, ten brief fault scenarios, and five additional hardening scenarios in
-Release/ASan/TSan. It includes decoder/daemon integration, SQL assertions, systemd SIGKILL/watchdog
-restart, GCC/Clang strict diagnostics, GCC static analysis, ASan/UBSan, TSan,
-Helgrind and a 120-second fuzz budget. TSan uses `setarch -R` for its process tree
-on the ARM64 VM; global ASLR is unchanged. [Fuzzer contract](fuzz/README.md).
-
-| Evidence boundary | What it checks |
-| --- | --- |
-| GitHub Actions workflow | GCC/Clang builds; C/Python units; decoder CLI; real PostgreSQL schema/transaction/permission checks; ASan/UBSan; GCC analyzer; 10-second fuzz budget |
-| Linux-local gate | Real vcan decoder/monitor/persistence scenarios, database outages, load accounting, systemd, TSan/Helgrind, demo and longer fuzz session |
-
-The workflow does not assume hosted runners can configure vcan. It neither skips
-a failed bus test nor substitutes a Python virtual bus. Its commands were verified
-locally first, and the hosted job has since passed on the release commit
-(`ubuntu-24.04`: 45 cmocka cases per build, seven Python cases, five of five
-PostgreSQL contracts, zero warnings and zero sanitizer/analyzer findings).
-Because that job deliberately omits vcan and systemd, **it is not evidence for the
-bus, supervision or hardware gates**, which remain Linux-local.
-Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml).
-
-## Limits and non-claims
-
-- Queue memory is volatile: N pending readings, 256 events and one immutable
-  in-flight batch of at most 32 records. Oldest pending records are evicted and
-  counted. The demo's capacity-four/eleven-arrival fixture has no readings in flight.
-- Database recovery backfills retained records and writes gaps only for known
-  loss. SIGKILL loses unpersisted memory. A lost COMMIT response is ambiguous;
-  some unconfirmed data may already be stored. New runs cannot reconstruct lost
-  counters/history. There is no disk spool or crash-durable queue.
-- vcan load tests measure Linux application behavior. They cannot establish CAN
-  arbitration, bitrate limits, electrical behavior, wiring quality or bus-off
-  recovery. The burst test disables persistence; it is not a database-throughput claim.
-- CRC/counters do not authenticate a sender. Large sequence gaps and old replays
-  across wraps are ambiguous. Stable readings are not proof of failed sensors.
-- Rate plausibility uses receive time: scheduler batching can create apparent
-  spikes and reject otherwise reasonable samples.
-- No hard real-time or production-capacity guarantee. Diagnostic regular-file
-  output may block; full diagnostic pipes drop counted lines. PostgreSQL/storage
-  determine the durability of committed rows. Network deadlines do not bound
-  local libpq credential/certificate file stalls or arbitrary scheduler delays.
-- No hardware validation, NetBotz/A-Link compatibility, dashboard/API, authenticated
-  CAN, on-disk spool or Buildroot extension is included.
-
-Use the [interview guide](docs/INTERVIEW_GUIDE.md) to demonstrate the project and
-the [resume evidence](docs/RESUME_EVIDENCE.md) to choose defensible claims.
-Study the [learning guide](docs/LEARNING_GUIDE.md), then `src/monitor.c`,
-`src/queue.c` and `src/persistence.c`. [Decisions](docs/DECISIONS.md) record brief
-refinements. [State](CODEX_STATE.md) records the completed checkpoint and boundary.
-Earlier evidence: [1](docs/CHECKPOINT_1_VERIFICATION.md),
-[2](docs/CHECKPOINT_2_VERIFICATION.md), [3](docs/CHECKPOINT_3_VERIFICATION.md).
+No hard real-time, physical CAN, hardware power-cut, unlimited retention or
+remote-reconciliation guarantee. vcan lacks arbitration, bitrate and electrical
+behavior. Diagnostic pipes can drop counted lines; regular-file output can
+block. API/dashboard, brokers, Modbus, authentication and hardware extensions
+remain outside this checkpoint. [Decisions](docs/DECISIONS.md),
+[learning guide](docs/LEARNING_GUIDE.md), [state](CODEX_STATE.md).

@@ -1,5 +1,6 @@
 #include "vigil/monitor.h"
 #include "vigil/persistence.h"
+#include "vigil/outbox.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -192,6 +193,16 @@ static void persistence_status(struct diagnostics *d, uint64_t now)
         s.outage_started_ms != 0 ? now - s.outage_started_ms : 0,
         s.outage_total_ms, s.last_outage_ms, s.gap_markers, s.snapshots_written, s.last_error[0] == '\0' ? "none" : s.last_error,
         d->persisted_revision, s.acknowledged_revision, s.abandoned_readings, s.abandoned_events);
+    emit(d, "outbox run_id=%s local_state=%s remote_state=deferred local_committed=%" PRIu64
+        " local_readings=%" PRIu64 " durable_pending=%" PRIu64 " pending_batches=%" PRIu64
+        " pending_bytes=%" PRIu64 " spool_admitted=%" PRIu64 " spool_retired=%" PRIu64
+        " local_failures=%" PRIu64 " sqlite_error=%d reading_evicted=%" PRIu64
+        " event_evicted=%" PRIu64 " reading_rejected=%" PRIu64 " event_rejected=%" PRIu64
+        " local_revision=%" PRIu64 " count_exact=%u\n", d->persistence->run_id,
+        vigil_store_name((enum vigil_store_result)s.local_state),s.locally_committed,s.locally_committed_readings,
+        s.durable_records,s.durable_batches,s.durable_bytes,s.spool_admitted,s.spool_retired,
+        s.local_failures,s.sqlite_error,s.readings_evicted,s.events_evicted,s.readings_rejected,s.events_rejected,
+        s.local_revision,(unsigned)s.count_exact);
 }
 
 static void persistence_update(struct diagnostics *d, const struct vigil_monitor *m, uint64_t now)
@@ -330,13 +341,13 @@ static bool receive_batch(int fd, struct vigil_monitor *m, struct diagnostics *d
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: vigild [--interface vcan0] [--config FILE] [--queue-capacity N] [--no-persistence]\n"
+    fprintf(stderr, "usage: vigild [--interface vcan0] [--config FILE] [--queue-capacity N] [--outbox-path ABSOLUTE] [--no-persistence]\n"
                     "SIGUSR1: status snapshot; SIGINT/SIGTERM: clean shutdown\n");
 }
 
 int main(int argc, char **argv)
 {
-    const char *interface = "vcan0", *path = NULL;
+    const char *interface = "vcan0", *path = NULL, *outbox_path = NULL;
     bool persistence_enabled = true, queue_seen = false;
     size_t capacity = 1024;
     bool interface_seen = false;
@@ -348,7 +359,8 @@ int main(int argc, char **argv)
         if (i + 1 >= argc) { usage(); return 2; }
         if (strcmp(argv[i], "--interface") == 0 && !interface_seen) {
             interface = argv[++i]; interface_seen = true;
-        } else if (strcmp(argv[i], "--config") == 0 && path == NULL) path = argv[++i];
+        } else if (strcmp(argv[i], "--outbox-path") == 0 && outbox_path == NULL) outbox_path = argv[++i];
+        else if (strcmp(argv[i], "--config") == 0 && path == NULL) path = argv[++i];
         else if (strcmp(argv[i], "--queue-capacity") == 0 && !queue_seen) {
             const char *value = argv[++i];
             if (*value < '0' || *value > '9') { usage(); return 2; }
@@ -358,6 +370,7 @@ int main(int argc, char **argv)
             capacity = (size_t)n; queue_seen = true;
         } else { usage(); return 2; }
     }
+    if (outbox_path != NULL && (!persistence_enabled || outbox_path[0] != '/')) { usage(); return 2; }
     struct vigil_config config;
     vigil_config_defaults(&config);
     char error[256];
@@ -398,7 +411,7 @@ int main(int argc, char **argv)
     struct diagnostics diagnostics = {.degraded = {.kind = VIGIL_ALARM_PERSISTENCE,
                                                    .severity = VIGIL_WARNING}};
     if (persistence_enabled) {
-        if (!vigil_persistence_start(&persistence, capacity)) { errno = EINVAL; goto cleanup; }
+        if (!vigil_persistence_start(&persistence, capacity, outbox_path == NULL ? VIGIL_OUTBOX_DEFAULT : outbox_path)) { errno = EINVAL; goto cleanup; }
         persistence_started = true;
         diagnostics.persistence = &persistence;
     }
@@ -409,7 +422,7 @@ int main(int argc, char **argv)
     uint64_t last_status = now;
     persistence_update(&diagnostics, &monitor, now);
     last_watchdog = now;
-    (void)sd_notify(0, "READY=1\nSTATUS=Monitoring CAN; database history is asynchronous");
+    (void)sd_notify(0, "READY=1\nSTATUS=Monitoring CAN; local outbox ready; remote replay deferred");
     fprintf(stderr, "ready interface=%s pods=%zu pid=%ld\n", interface,
             config.pod_count, (long)getpid());
     snapshot(&diagnostics, &monitor, now);

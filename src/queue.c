@@ -1,7 +1,23 @@
 #include "vigil/queue.h"
+#include "vigil/outbox.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+static _Thread_local unsigned lock_depth;
+void vigil_queue_lock(struct vigil_queue *q)
+{
+    if (lock_depth!=0 || pthread_mutex_lock(&q->mutex)!=0) abort();
+    ++lock_depth;
+}
+void vigil_queue_unlock(struct vigil_queue *q)
+{
+    if (lock_depth!=1) abort();
+    --lock_depth;
+    if (pthread_mutex_unlock(&q->mutex)!=0) abort();
+}
+void vigil_queue_assert_io(void) { if (lock_depth!=0) abort(); }
 
 static uint64_t clock_ms(clockid_t clock)
 {
@@ -27,6 +43,7 @@ bool vigil_queue_init(struct vigil_queue *q, size_t capacity)
     (void)pthread_condattr_destroy(&attr);
     if (result != 0) goto fail_mutex;
     q->stats.capacity = capacity;
+    q->stats.count_exact = true;
     return true;
 fail_mutex:
     (void)pthread_mutex_destroy(&q->mutex);
@@ -42,11 +59,26 @@ void vigil_queue_destroy(struct vigil_queue *q)
     q->readings = NULL;
 }
 
-void vigil_queue_push(struct vigil_queue *q, struct vigil_record record)
+enum vigil_queue_result vigil_queue_push(struct vigil_queue *q, struct vigil_record record)
 {
-    (void)pthread_mutex_lock(&q->mutex);
+    vigil_queue_lock(q);
     struct vigil_queue_stats *s = &q->stats;
-    if (s->stopping) { (void)pthread_mutex_unlock(&q->mutex); return; }
+    enum vigil_queue_result outcome = VIGIL_QUEUED;
+    if (s->stopping) {
+        uint64_t *closed = record.reading ? &s->closed_readings : &s->closed_events;
+        if (*closed < INT64_MAX) ++*closed; else s->count_exact = false;
+        vigil_queue_unlock(q); return VIGIL_CLOSED;
+    }
+    if (q->next_seq >= (uint64_t)INT64_MAX - 1U ||
+        s->readings_queued >= (uint64_t)INT64_MAX - 1U || s->events_queued >= (uint64_t)INT64_MAX - 1U) {
+        uint64_t *rejected = record.reading ? &s->readings_rejected : &s->events_rejected;
+        uint64_t *dropped = record.reading ? &s->readings_dropped : &s->events_dropped;
+        if (s->readings_dropped == 0 && s->events_dropped == 0) s->first_drop_ms=record.mono_ms;
+        if (record.mono_ms>s->last_drop_ms) s->last_drop_ms=record.mono_ms;
+        if (*rejected < INT64_MAX) ++*rejected; else s->count_exact = false;
+        if (*dropped < INT64_MAX) ++*dropped; else s->count_exact = false;
+        vigil_queue_unlock(q); return VIGIL_RESOURCE_REJECTED;
+    }
     struct vigil_record *lane = record.reading ? q->readings : q->events;
     size_t *head = record.reading ? &q->reading_head : &q->event_head;
     size_t *depth = record.reading ? &s->reading_depth : &s->event_depth;
@@ -58,8 +90,9 @@ void vigil_queue_push(struct vigil_queue *q, struct vigil_record record)
         if (s->readings_dropped + s->events_dropped == 0 ||
             lane[*head].mono_ms < s->first_drop_ms) s->first_drop_ms = lane[*head].mono_ms;
         if (lane[*head].mono_ms > s->last_drop_ms) s->last_drop_ms = lane[*head].mono_ms;
-        if (record.reading) ++s->readings_dropped;
-        else ++s->events_dropped;
+        if (record.reading) { ++s->readings_dropped; ++s->readings_evicted; }
+        else { ++s->events_dropped; ++s->events_evicted; }
+        outcome = VIGIL_QUEUED_EVICTED;
         *head = (*head + 1U) % capacity;
         --*depth;
     }
@@ -68,12 +101,12 @@ void vigil_queue_push(struct vigil_queue *q, struct vigil_record record)
     ++*depth;
     if (*depth > *high) *high = *depth;
     (void)pthread_cond_signal(&q->changed);
-    (void)pthread_mutex_unlock(&q->mutex);
+    vigil_queue_unlock(q);
+    return outcome;
 }
 
-size_t vigil_queue_take(struct vigil_queue *q, struct vigil_record out[VIGIL_BATCH_SIZE])
+static size_t take_locked(struct vigil_queue *q, struct vigil_record out[VIGIL_BATCH_SIZE])
 {
-    (void)pthread_mutex_lock(&q->mutex);
     struct vigil_queue_stats *s = &q->stats;
     size_t n = 0;
     /* Exactly one immutable in-flight batch: never replace an ambiguous commit. */
@@ -94,37 +127,54 @@ size_t vigil_queue_take(struct vigil_queue *q, struct vigil_record out[VIGIL_BAT
         }
         s->in_flight = n;
     }
-    (void)pthread_mutex_unlock(&q->mutex);
     return n;
+}
+size_t vigil_queue_take(struct vigil_queue *q, struct vigil_record out[VIGIL_BATCH_SIZE])
+{
+    vigil_queue_lock(q);
+    size_t n = take_locked(q, out);
+    vigil_queue_unlock(q);
+    return n;
+}
+void vigil_queue_take_local(struct vigil_queue *q, struct vigil_capture *c)
+{
+    vigil_queue_lock(q);
+    c->count = take_locked(q, c->records);
+    c->stats = q->stats;
+    c->ticket = q->next_seq;
+    c->revision = q->alarm_revision;
+    c->alarm_count = q->alarm_count;
+    memcpy(c->alarms, q->alarms, c->alarm_count * sizeof(*c->alarms));
+    vigil_queue_unlock(q);
 }
 
 void vigil_queue_ack(struct vigil_queue *q)
 {
-    (void)pthread_mutex_lock(&q->mutex);
+    vigil_queue_lock(q);
     q->stats.records_written += q->stats.in_flight;
     q->stats.readings_written += q->stats.in_flight_readings;
     q->stats.in_flight = 0;
     q->stats.in_flight_readings = 0;
-    (void)pthread_mutex_unlock(&q->mutex);
+    vigil_queue_unlock(q);
 }
 
 void vigil_queue_stats(struct vigil_queue *q, struct vigil_queue_stats *out)
 {
-    (void)pthread_mutex_lock(&q->mutex);
+    vigil_queue_lock(q);
     *out = q->stats;
-    (void)pthread_mutex_unlock(&q->mutex);
+    vigil_queue_unlock(q);
 }
 
 void vigil_queue_publish(struct vigil_queue *q, const struct vigil_record *alarms,
                          size_t count, uint64_t revision)
 {
     if (count > VIGIL_ALARM_CAPACITY) abort();
-    (void)pthread_mutex_lock(&q->mutex);
+    vigil_queue_lock(q);
     memcpy(q->alarms, alarms, count * sizeof(*alarms));
     q->alarm_count = count;
     q->alarm_revision = revision;
     (void)pthread_cond_signal(&q->changed);
-    (void)pthread_mutex_unlock(&q->mutex);
+    vigil_queue_unlock(q);
 }
 
 bool vigil_persistence_degraded(struct vigil_persistence_health *h,
@@ -134,7 +184,7 @@ bool vigil_persistence_degraded(struct vigil_persistence_health *h,
                     s->events_dropped != h->event_drops_seen;
     h->reading_drops_seen = s->readings_dropped;
     h->event_drops_seen = s->events_dropped;
-    return new_loss || !s->connected ||
+    return new_loss || (s->local_mode && (!s->local_ready || s->local_state != 0 || s->durable_batches != 0)) || !s->connected ||
            s->readings_dropped != s->acknowledged_reading_drops ||
            s->events_dropped != s->acknowledged_event_drops ||
            (was_degraded && (s->reading_depth + s->event_depth + s->in_flight != 0 ||

@@ -1,7 +1,8 @@
 # Vigil Resilience failure contract — Stage 0B
 
 Contract version 1, 2026-10-22 America/Los_Angeles. **Design acceptance criteria;
-not implemented guarantees of the current binary.**
+the full target, with only local Stage 1 implemented. Current scope and
+evidence are in [OUTBOX.md](OUTBOX.md) and [RESILIENCE_STATE.md](RESILIENCE_STATE.md).**
 [RESILIENCE_ARCHITECTURE.md](RESILIENCE_ARCHITECTURE.md) specifies the schema,
 algorithms, numeric bounds and file interfaces. This document defines observable
 meaning, allowed losses and required proof. Current evidence and scope live in
@@ -158,8 +159,8 @@ Every row records its expectation **before** execution, uses disposable state,
 exits nonzero on a failed assertion, and saves SQL/local inventory plus exact
 binary/source digest and failpoint tokens. 'Local inventory' is a stopped,
 recovered SQLite DB with schema/origin/order/payload/counter checks. Tests compare
-full identities and bytes, not merely aggregate row counts. Cases below are
-future requirements; none has passed against an unimplemented outbox.
+full identities and bytes, not merely aggregate row counts. This is the full target matrix. Stage 1's local subset and observed results
+are recorded in RESILIENCE_STATE.md; remote assertions remain future work.
 
 | Test | Deterministic setup | Machine-checkable assertion |
 | --- | --- | --- |
@@ -211,3 +212,16 @@ Stage 0B acceptance is a source-grounded, internally reviewed design with no
 open product decisions. Stage 1 readiness means the specified local module
 can be implemented after explicit owner authorization. It does not mean the
 outbox exists, these tests passed, or deployment/production changes are approved.
+
+## Stage 1 acceptance slice
+
+The owner authorized daemon/local integration for this checkpoint. Tests cover
+local identity/append/rollback/order/reopen, logical/physical limits, capture
+races, storage faults, volatile lane reserve, shutdown, real process kills and
+original live monitoring. Remote transmission, acknowledgement, retirement,
+collision verification against PG and the remote benchmark are not accepted or
+implemented by Stage 1. Existing v1 SQL contracts remain regression evidence
+for migration 001, not proof of v2 replay. Local admission never increments
+remote-written counters. Durable older history remains pending at capacity;
+only volatile inputs can be rejected/evicted. Production/test artifacts remain
+separate. SIGKILL evidence does not qualify hardware power-loss behavior.

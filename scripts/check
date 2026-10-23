@@ -8,7 +8,7 @@ if [[ ${1:-} == --clean ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check [--clean]' >&2; exit 1
 fi
-printf 'EXPECT: strict clean build, 45 C cases in each build, seven Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
+printf 'EXPECT: strict clean build, 60 C cases in each build, seven Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
@@ -24,15 +24,16 @@ ctest --test-dir build-sanitize --output-on-failure
 .venv/bin/python tests/monitor_integration.py --daemon build/vigild
 .venv/bin/python tests/monitor_integration.py --daemon build-sanitize/vigild
 
-.venv/bin/python tests/persistence_integration.py --daemon build/vigild --systemd
-.venv/bin/python tests/persistence_integration.py --daemon build-sanitize/vigild
+.venv/bin/python tests/resilience_integration.py --build build --output "artifacts/debug-outbox-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 20
+.venv/bin/python tests/resilience_storage.py --build build --output "artifacts/storage-outbox-$(date -u +%Y%m%dT%H%M%SZ)"
+.venv/bin/python tests/resilience_integration.py --build build-sanitize --output "artifacts/asan-outbox-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DVIGIL_TSAN=ON
 cmake --build build-tsan --parallel 2
 export TSAN_OPTIONS=halt_on_error=1
 # GCC TSan on this ARM64 Ubuntu kernel needs a compatible address layout.
 # Disable ASLR for this subprocess tree only, never change global VM settings.
 setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
-setarch "$(uname -m)" -R .venv/bin/python tests/persistence_integration.py --daemon build-tsan/vigild
+setarch "$(uname -m)" -R .venv/bin/python tests/resilience_integration.py --build build-tsan --output "artifacts/tsan-outbox-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2
 valgrind --tool=helgrind --error-exitcode=99 --fair-sched=yes build/test_queue
 for script in scripts/*; do bash -n "$script"; done
 git diff --check

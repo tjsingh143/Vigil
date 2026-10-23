@@ -16,7 +16,8 @@ jobs:
       - name: Install build and PostgreSQL dependencies (no vcan setup)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libcmocka-dev libpq-dev postgresql libsystemd-dev clang libclang-rt-dev python3-venv
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libcmocka-dev libpq-dev postgresql libsystemd-dev clang libclang-rt-dev python3-venv curl
+          ./scripts/setup-sqlite
           python3 -m venv .venv
           .venv/bin/python -m pip install -r simulator/requirements.txt
       - name: Build, unit tests, non-vcan contracts, sanitizers, static analysis and fuzz

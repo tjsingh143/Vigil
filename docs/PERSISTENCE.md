@@ -1,3 +1,8 @@
+> Historical 1.0 PostgreSQL writer contract. Stage 1 replaces this runtime
+> admission path with the [SQLite outbox](OUTBOX.md). Remote replay/retirement
+> is deferred; the v1 migration and standalone contracts remain unchanged.
+> The historical scenarios here passed on the archived baseline before edits.
+
 # Persistence and service contract
 
 ## Owners and memory bounds
