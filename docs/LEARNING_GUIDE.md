@@ -529,3 +529,20 @@ sensor state unknown until new traffic arrives. Explain separately what a
 SIGKILL fixture establishes and what host power-loss/storage testing would
 need to establish. The audit authorizes no implementation; current scope is
 recorded in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
+
+## Resilience Stage 0B — follow the two commits
+
+The future [contract](RESILIENCE_CONTRACT.md) distinguishes volatile queue
+publication, local durable admission, remote commit and local retirement.
+The [architecture](RESILIENCE_ARCHITECTURE.md) freezes a remote batch and its
+original identity in one SQLite transaction. A PG worker can wait on the
+network while a separate storage worker keeps admitting local history.
+
+Work three crashes on paper: before SQLite commit (RAM can vanish), after PG
+commit but before local retirement (retry the same bytes and verify equality),
+and after local retirement (PG is the retained payload evidence). Explain why
+an old run's acknowledged alarm revision cannot clear a new run's degraded
+alarm, and why WAL mode without successful FULL/directory sync is insufficient.
+Design completion is not implementation or passing fault-test evidence; Stage 1
+is still unauthorized. The original core and its volatile crash limits above
+remain unchanged.

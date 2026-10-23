@@ -1,10 +1,16 @@
-# Current work — Resilience Stage 0 audit
+# Current work — Resilience Stage 0B design complete
 
-The owner authorized a documentation-only baseline audit on 2026-10-22.
-Current stage evidence, blockers and stop boundary live in
-[docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md); source integration and
-failure contracts live in [docs/RESILIENCE_BASELINE.md](docs/RESILIENCE_BASELINE.md).
-No SQLite, daemon or PostgreSQL schema implementation is authorized. The
+The owner authorized documentation-only architecture finalization on 2026-10-22.
+Current acceptance, evidence and stop boundary live in
+[docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md). The normative future
+[failure contract](docs/RESILIENCE_CONTRACT.md) and
+[architecture](docs/RESILIENCE_ARCHITECTURE.md) specify separate SQLite/PG
+workers, immutable durable batches, original-run identities, verified replay,
+bounds and T01–T20 acceptance tests. Stage 0 evidence/hash was reconciled;
+no new runtime gate or resilience test ran. Technical design review is complete,
+owner approval is not inferred, and Stage 1 awaits explicit authorization.
+No SQLite, daemon, migration, unit or test implementation changed. Preserve
+the local audited base instead of upstream documentation deletions. The
 completed release record below remains historical and is preserved.
 
 # Vigil state — FINAL/COMPLETE (original core release)
