@@ -8,7 +8,7 @@ if [[ ${1:-} == --clean ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check [--clean]' >&2; exit 1
 fi
-printf 'EXPECT: strict clean build, 60 C cases in each build, seven Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
+printf 'EXPECT: strict clean build, 65 C cases in each build, seven Python tests, real vcan/PostgreSQL/systemd regression, zero sanitizer/Helgrind findings.\n'
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
@@ -34,6 +34,9 @@ export TSAN_OPTIONS=halt_on_error=1
 # Disable ASLR for this subprocess tree only, never change global VM settings.
 setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
 setarch "$(uname -m)" -R .venv/bin/python tests/resilience_integration.py --build build-tsan --output "artifacts/tsan-outbox-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2
-valgrind --tool=helgrind --error-exitcode=99 --fair-sched=yes build/test_queue
+valgrind --tool=helgrind --error-exitcode=99 --fair-sched=yes --suppressions=tests/helgrind.supp build/test_queue
 for script in scripts/*; do bash -n "$script"; done
 git diff --check
+
+.venv/bin/python tests/resilience_database_contract.py
+.venv/bin/python tests/resilience_replay.py --build build --output "artifacts/replay-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2

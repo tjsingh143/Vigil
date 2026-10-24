@@ -1,0 +1,26 @@
+# libpq brings in libp11-kit through its system TLS dependencies. Its process
+# finalizer destroys two library-owned static mutexes not observed by Helgrind.
+# Scope to the library + ELF finalizer stack; no Vigil frame or race suppression.
+{
+   p11-kit-elf-finalizer-mutexes
+   Helgrind:Misc
+   obj:*/vgpreload_helgrind-*.so
+   obj:*/libp11-kit.so.*
+   fun:_dl_call_fini
+   fun:_dl_fini
+   fun:__run_exit_handlers
+   fun:exit
+   fun:(below main)
+}
+# glibc can send an internal replacement wake from pthread_cond_timedwait
+# before reacquiring the user's mutex. Signal-without-mutex is not a POSIX
+# error (https://valgrind.org/docs/manual/hg-manual.html#hg-manual.effective-use).
+# Match only that libc call chain, never a Vigil signal call or a race report.
+{
+   glibc-internal-timedwait-replacement-wake
+   Helgrind:Misc
+   obj:*/vgpreload_helgrind-*.so
+   fun:__pthread_cond_wait_common
+   fun:pthread_cond_timedwait*
+   obj:*/vgpreload_helgrind-*.so
+}

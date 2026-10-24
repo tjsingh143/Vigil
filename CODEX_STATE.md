@@ -1,3 +1,46 @@
+# Current work — Resilience Stage 2 COMPLETE
+
+**Stage 2 PASS. Stop; do not start Stage 3.** The owner authorized implementation,
+isolated Linux/PG tests, docs and a local commit. One Codex agent only; no
+subagents/delegation. Started clean main at dd2773c. No production migration,
+service/data change, deployment, push or publication.
+
+The separate asynchronous libpq owner replays immutable SQLite FIFO heads with
+original run metadata and exact receipts via additive migration 002, reusing
+unchanged write_batch/001. Equal content succeeds; conflicts poison. Only
+validated PG completion permits FULL/directory-synced transactional retirement.
+Unknown outcomes retry unchanged; old-run cursors never become current live truth.
+Local retirement uncertainty is reconciled before new mutations/publication.
+Main retains sensors/alarms/watchdog; storage and network never hold queue locks.
+
+Independent Stage 1 core durability passed before remote work; all 55 unchanged
+baseline commands completed successfully. Final complete clean Stage 2 gate:
+**61 zero command exits**, 2026-10-24T02:25:29.975538+00:00–2026-10-24T02:38:55.042373+00:00.
+Source SHA-256: `d67373a3641414533e7189648a2dd2c8946929a61c16598ebe5edb5a103e8399`.
+Actual report: [docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md); operation:
+[docs/OUTBOX.md](docs/OUTBOX.md). Raw evidence: artifacts/resilience-stage2/final7/.
+Six unit builds passed 390 C cases; v1/v2 SQL, all four local/remote/monitor
+variants, 26 lost-PG-response kills, 48 ack cuts, 130 local cuts, storage/systemd,
+ASan/UBSan/TSan, scoped Helgrind, analyzer, CAN/load/manual/fuzz and CI commands
+passed. Debug proved 23 identical submissions, 8 preserved replay readings;
+64 new arrivals while recovering yielded 72 exact remote readings. Max snapshot:
+193 entries, 162 rows, 32 high raises/clears. Unknown-retirement status equations
+passed with twelve arrivals. Natural load 46839+3162=50001; forced223+49778=50001.
+Fuzzer: 89032894 inputs/121 s/313 MiB, no finding.
+
+Review fixed degraded-alarm feedback, retirement publication ordering, query
+failure classification and recovery/allocator guards; documented fixture/tool
+limits and retained failed attempts. Native evidence archive:
+6511398 bytes, SHA-256 110d1a6dd688562d5e8bcafe90c8afa5eb5adb5783ee496548cc907d4ec564fd.
+No test unit/mount/daemon remains; default vigild inactive, 16/main online.
+No power-cut, XFS, physical CAN, throughput, unlimited retention or hosted CI
+claim. Queued/held work remains volatile. The reviewed checkpoint hash is
+`git log -1 --oneline`, also supplied in the final delivery response.
+
+---
+
+# Historical Stage 1 state
+
 # Current work — Resilience Stage 1 local outbox
 
 The owner authorized SQLite local durability, daemon/service configuration,

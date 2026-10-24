@@ -25,7 +25,8 @@ struct vigil_queue_stats {
     uint64_t locally_committed, locally_committed_readings, local_failures;
     uint64_t durable_records, durable_batches, durable_bytes, spool_admitted, spool_retired;
     uint64_t local_revision, local_reading_drops, local_event_drops;
-    unsigned local_state;
+    unsigned local_state, remote_state;
+    uint64_t replay_attempts, oldest_pending_order;
     int sqlite_error;
     bool local_mode, local_ready, count_exact;
     uint64_t acknowledged_reading_drops, acknowledged_event_drops;
@@ -71,6 +72,8 @@ bool vigil_persistence_degraded(struct vigil_persistence_health *health,
     const struct vigil_queue_stats *stats, bool was_degraded, uint64_t published_revision);
 /* Shared-state lock wrappers also enforce that this caller holds no queue
  * lock at a storage I/O boundary (other threads may independently enqueue). */
+void vigil_lock(pthread_mutex_t *mutex);
+void vigil_unlock(pthread_mutex_t *mutex);
 void vigil_queue_lock(struct vigil_queue *q);
 void vigil_queue_unlock(struct vigil_queue *q);
 void vigil_queue_assert_io(void);

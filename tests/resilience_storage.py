@@ -84,12 +84,18 @@ def physical(build, output, readonly):
                 run(["sudo", "mount", "-o", "remount,rw", str(mount)])
             else:
                 (mount / "fill").unlink()
+            final = next(e for e in reversed(d.events) if e["event"] == "outbox")
             inv = inventory(path, output / name)
-            assert inv["meta"]["pending_records"] == initial["durable_pending"]
+            # An ENOSPC attempt publishes none (asserted above). A later
+            # checkpoint can reuse already allocated DB/WAL pages, so another
+            # whole transaction may legitimately commit before shutdown.
+            assert inv["meta"]["pending_records"] == final["local_committed"]
+            assert inv["meta"]["pending_records"] >= initial["durable_pending"]
+            assert inv["meta"]["admitted_readings"] <= 1
             with daemon(build / "vigild", path) as restarted:
                 wait_local(restarted, lambda s: s["durable_pending"] >= initial["durable_pending"])
                 restarted.stop()
-            return dict(token=token, local_state=failed["local_state"], sqlite_error=failed["sqlite_error"], shutdown_s=elapsed)
+            return dict(token=token, local_state=failed["local_state"], sqlite_error=failed["sqlite_error"], shutdown_s=elapsed, initial=initial, failed=failed, final=final)
         finally:
             hook.close()
 
@@ -136,7 +142,7 @@ def systemd(build, output):
                  "PrivateDevices=yes", "NoNewPrivileges=yes", "CapabilityBoundingSet=", "AmbientCapabilities=",
                  "UMask=0077", "WatchdogSec=4s", "Restart=on-failure", "RestartSec=1s", "TimeoutStartSec=30s",
                  "TimeoutStopSec=3s", "NotifyAccess=main", "RestrictAddressFamilies=AF_CAN AF_UNIX AF_INET AF_INET6"]
-        run(["sudo", "systemd-run", "--unit", suffix, "--service-type=notify", *[f"--property={p}" for p in props],
+        run(["sudo", "systemd-run", "--setenv=VIGIL_DB_HOST=/tmp/vigil-test-no-postgres", "--unit", suffix, "--service-type=notify", *[f"--property={p}" for p in props],
              str(runtime / "vigild"), "--outbox-path", str(path)])
         def property_(key):
             return run(["systemctl", "show", unit, "--property=" + key, "--value"]).stdout.strip()

@@ -45,9 +45,9 @@ def inventory(path, output):
     assert meta["pending_records"] == sum(r["record_count"] for r in rows)
     assert meta["pending_payload_bytes"] == sum(len(r["payload"].encode()) for r in rows)
     assert meta["pending_batches"] == len(rows)
-    assert meta["admitted_records"] == meta["pending_records"]
-    assert meta["retired_records"] == 0 and meta["last_retired_order"] == 0
-    assert [r["order_id"] for r in rows] == list(range(1, meta["next_order_id"]))
+    assert meta["admitted_records"] == meta["pending_records"] + meta["retired_records"]
+    assert meta["retired_readings"] <= meta["retired_records"]
+    assert [r["order_id"] for r in rows] == list(range(meta["last_retired_order"]+1, meta["next_order_id"]))
     assert sizes["db"] <= 512 * 1024**2
     assert sizes.get("-wal", 0) < 520 * 1024**2
     assert sizes.get("-shm", 0) <= 2 * 1024**2
@@ -85,12 +85,12 @@ class Hook:
         self.rr, self.rw = os.pipe()
         self.name = name
         self.next_hit = hit
-        self.env = dict(os.environ, VIGIL_TEST_HOOK=name, VIGIL_TEST_HIT=str(hit), VIGIL_TEST_REPEAT=str(repeat),
+        self.env = dict(os.environ, VIGIL_DB_HOST="/tmp/vigil-test-no-postgres", VIGIL_TEST_HOOK=name, VIGIL_TEST_HIT=str(hit), VIGIL_TEST_REPEAT=str(repeat),
                         VIGIL_TEST_NOTIFY_FD=str(self.nw), VIGIL_TEST_RELEASE_FD=str(self.rr))
         # Daemon helper uses close_fds=True; use a dedicated subprocess wrapper
         # below to preserve precisely these two test FDs.
-    def token(self):
-        assert select.select([self.nr], [], [], 6)[0], f"no hook {self.name}"
+    def token(self, timeout=6):
+        assert select.select([self.nr], [], [], timeout)[0], f"no hook {self.name}"
         token = os.read(self.nr, 80).rstrip(b"\0").decode()
         assert token == f"{self.name}:{self.next_hit}", token
         self.next_hit += 1
@@ -103,7 +103,7 @@ class Hook:
 
 
 @contextmanager
-def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1):
+def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1, config=None):
     # Inherit test FDs only for the separate test binary. Reuse all existing
     # monitoring snapshot/accounting oracles without weakening their assertions.
     original = subprocess.Popen
@@ -114,9 +114,9 @@ def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1):
     subprocess.Popen = popen
     d = None
     try:
-        d = Daemon(str(exe), config_text(pods=(1,), timeout=500, status=100, rate=0),
+        d = Daemon(str(exe), config or config_text(pods=(1,), timeout=500, status=100, rate=0),
                    persistence=True, extra_args=("--outbox-path", str(path), "--queue-capacity", str(capacity)),
-                   env=hook.env if hook else env, pipesize=pipesize)
+                   env=hook.env if hook else (env or dict(os.environ, VIGIL_DB_HOST="/tmp/vigil-test-no-postgres")), pipesize=pipesize)
         yield d
     finally:
         subprocess.Popen = original

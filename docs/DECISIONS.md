@@ -430,3 +430,37 @@ recovery. A VFS test holds only the checkpoint lock busy, leaving the writer
 lock available, proving the append refusal and unchanged usage/allocators.
 The final clean Linux gate passed all 55 commands/240 C case executions;
 RESILIENCE_STATE.md records the final source digest and raw evidence.
+
+## Resilience Stage 2 — replay and reconciliation (2026-10-23)
+
+The owner authorized only Stage 2, including local commit, with one Codex agent.
+No delegation, deployment, production change, push or publication. Starting main
+was clean at dd2773c. The full v3 brief, state/contracts/architecture, Stage 1
+changes and actual source were independently inspected. The unchanged Stage 1
+Debug core durability suite passed before remote implementation; the complete
+55-command baseline finished on its detached native Linux worktree while
+implementation continued. The brief's owner-first coding deviation remains explicit.
+
+A separate PG owner preserves asynchronous libpq deadlines and uses a bounded
+mailbox independent of SQLite admission. Replay selects the frozen durable FIFO
+head; unknown outcomes retry exact bytes. Migration 002 adds original origins,
+exact receipts and invoker verification around unchanged deployed 001. Equal
+content succeeds, conflicts poison, and no unconfirmed remote effect can retire
+local history. SQLite's existing schema supports transactional deletion/prefix,
+usage, origin-cursor and lifetime counter updates; uncertain retirement recovers
+and seals before acknowledgement. Current-run health cursors remain separate
+from old-run spool retirement. Main keeps the monitoring and watchdog policies.
+
+OUTBOX.md and the architecture/contract amendments explain grants, capability
+checks, retry classification and the safe late-shutdown-result refinement.
+Stage 2 tests cover controlled A-J boundaries, direct local/PG content and
+accounting, and original local/monitor/supervision regressions. Actual results
+and development findings are recorded in RESILIENCE_STATE.md. Stage 3 benchmark,
+new products, hardware/power-cut qualification and retention remain deferred.
+
+The Stage 2 maximum-snapshot gate exposed self-generated degraded alarm chatter:
+Stage 1's unconditional pending-batch warning re-raised while persisting the
+clear transition. Healthy buffering now only holds a pre-existing degradation;
+failures/new losses still raise it. PG startup waits for the complete initial
+snapshot, preventing a health probe racing the first main-owned alarm update.
+The queue policy has a direct regression and maximum-snapshot remote evidence.

@@ -82,7 +82,15 @@ class Daemon:
             line = self.child.stderr.readline()
             self.errors.extend(line)
             assert line.startswith(b"ready "), line
-            targets = [os.readlink(path) for path in Path(f"/proc/{self.child.pid}/fd").iterdir()]
+            # /proc enumeration is not atomic: the separate PG owner may
+            # close an ephemeral socket between readdir and readlink.
+            targets = []
+            for path in Path(f"/proc/{self.child.pid}/fd").iterdir():
+                try:
+                    targets.append(os.readlink(path))
+                except FileNotFoundError:
+                    continue
+            assert self.child.poll() is None
             assert targets.count("anon_inode:[signalfd]") == 1, targets
             assert targets.count("anon_inode:[timerfd]") == 1, targets
             if not persistence:

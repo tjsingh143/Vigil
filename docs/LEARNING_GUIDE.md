@@ -1,8 +1,8 @@
 # Understanding the finished Vigil core
 
 The original-core explanations below retain their historical checkpoint context.
-Current persistence is the [Stage 1 SQLite outbox](OUTBOX.md), explained in the
-final section of this guide; PostgreSQL replay remains deferred.
+Current persistence is the [SQLite outbox and Stage 2 replay](OUTBOX.md), explained in the
+final sections of this guide. Older explanations retain their historical scope.
 
 ## What exists today
 
@@ -591,3 +591,56 @@ loop while its drain budget remains. The store itself must refuse the next
 mutation until truncate checkpoint and directory sync succeed. The new VFS test
 leaves the writer lock usable while holding the checkpoint lock busy, so an
 incorrect implementation would really append and fail the usage assertion.
+
+## Resilience Stage 2 — follow all three acknowledgements
+
+Trace `queue_take_local → outbox_append`: one local FULL transaction and directory
+sync freeze the original run, sequence, complete payload, loss capture and alarm
+snapshot. Queue publication is still volatile. Next trace storage's `outbox_peek`
+to replay.c. Only the oldest durable order enters the one-slot mailbox. PG owns
+its own copy and connection; SQLite admission can continue during network waits.
+Neither worker may nest queue/mailbox locks or enter I/O with one held.
+
+`replay_batch` validates original JSON and origin, serializes v2 calls per run,
+reuses the v1 projection, verifies every history column, and commits an exact byte
+receipt with the checkpoint. Equal bytes succeed without another history effect;
+a reused identity with different bytes is VG001. The client drains results to
+ReadyForQuery/idle and checks the returned run, batch, count and disposition.
+Losing that response means UNKNOWN. Explain why timeout cannot establish rollback.
+
+Finally trace `outbox_retire`: only matching confirmed head evidence can delete
+local payload and advance prefix/usage/retired loss and revision in one FULL
+transaction. Directory sync precedes status publication. Kill after PG commit,
+after success, after SQLite DELETE and after local COMMIT. Before local commit,
+retry the original bytes and receive equal. After commit, the absent row belongs
+to the validated retired prefix and must stay absent. VFS uncertainty forces a
+real recovery barrier before publishing acknowledgement.
+
+Old-run replay never restores a sensor or clears the new run's degraded alarm.
+Compare current-run records_written against current locally_committed, and spool
+retired against lifetime admitted. Unknown remote work is already in durable
+pending; do not count it twice. Full storage can hold one volatile candidate;
+retiring older data frees capacity, while a poison head intentionally stops FIFO.
+Study the fixture SQL and stopped DB/WAL inventories, not only process exits.
+SIGKILL is process recovery evidence, not power-loss qualification. The owner
+must still personally explain this agent-authored code and its assumptions.
+
+Ordinary healthy buffering must not raise degraded again merely because its
+own clear transition is awaiting delivery. Backlog holds an already active
+alarm until catch-up; failures and newly observed losses raise it. The maximum
+snapshot regression found the feedback loop created by confusing those rules.
+A queue-policy regression now covers the clear transition's durable buffering.
+
+ENOSPC means a particular allocation/write failed, not that every later local
+transaction must fail. Checkpointing and reuse of existing DB/WAL space can
+permit another valid commit while the filesystem is full. Compare final status
+with recovered inventory, and separately prove that the failed call published
+no durability. Do not infer a lost or phantom record from an older status sample.
+
+The lost-retirement-confirmation regression found a second publication hazard:
+a new append could recover a committed retirement and publish its spool totals
+while the pending result's current-run written counters were still old. Data
+survived, but the status equations disagreed. Storage now reconciles/publishes
+that retirement before another mutation. Follow `retire_blocked` in the owner
+loop and the forced `retire_commit_unknown` case; both spool and current-origin
+equations must hold in every copied status pair, not only after eventual drain.

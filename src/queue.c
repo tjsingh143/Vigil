@@ -6,17 +6,19 @@
 #include <time.h>
 
 static _Thread_local unsigned lock_depth;
-void vigil_queue_lock(struct vigil_queue *q)
+void vigil_lock(pthread_mutex_t *mutex)
 {
-    if (lock_depth!=0 || pthread_mutex_lock(&q->mutex)!=0) abort();
+    if (lock_depth!=0 || pthread_mutex_lock(mutex)!=0) abort();
     ++lock_depth;
 }
-void vigil_queue_unlock(struct vigil_queue *q)
+void vigil_unlock(pthread_mutex_t *mutex)
 {
     if (lock_depth!=1) abort();
     --lock_depth;
-    if (pthread_mutex_unlock(&q->mutex)!=0) abort();
+    if (pthread_mutex_unlock(mutex)!=0) abort();
 }
+void vigil_queue_lock(struct vigil_queue *q) { vigil_lock(&q->mutex); }
+void vigil_queue_unlock(struct vigil_queue *q) { vigil_unlock(&q->mutex); }
 void vigil_queue_assert_io(void) { if (lock_depth!=0) abort(); }
 
 static uint64_t clock_ms(clockid_t clock)
@@ -184,9 +186,9 @@ bool vigil_persistence_degraded(struct vigil_persistence_health *h,
                     s->events_dropped != h->event_drops_seen;
     h->reading_drops_seen = s->readings_dropped;
     h->event_drops_seen = s->events_dropped;
-    return new_loss || (s->local_mode && (!s->local_ready || s->local_state != 0 || s->durable_batches != 0)) || !s->connected ||
+    return new_loss || (s->local_mode && (!s->local_ready || s->local_state != 0)) || !s->connected ||
            s->readings_dropped != s->acknowledged_reading_drops ||
            s->events_dropped != s->acknowledged_event_drops ||
-           (was_degraded && (s->reading_depth + s->event_depth + s->in_flight != 0 ||
+           (was_degraded && ((s->local_mode && s->durable_batches != 0) || s->reading_depth + s->event_depth + s->in_flight != 0 ||
                             s->acknowledged_revision < published_revision));
 }

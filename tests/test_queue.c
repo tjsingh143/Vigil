@@ -179,6 +179,16 @@ static void degradation_policy(void **state)
     assert_true(vigil_persistence_degraded(&h, &s, true, 2));
     s.acknowledged_event_drops = 3;
     assert_false(vigil_persistence_degraded(&h, &s, true, 2));
+    s.local_mode = s.local_ready = true;
+    s.durable_batches = 1;
+    /* Healthy outbox buffering, including the persisted clear transition,
+     * cannot itself re-raise the alarm and create an endless event loop. */
+    assert_false(vigil_persistence_degraded(&h, &s, false, 2));
+    assert_true(vigil_persistence_degraded(&h, &s, true, 2));
+    s.durable_batches = 0;
+    assert_false(vigil_persistence_degraded(&h, &s, true, 2));
+    s.local_state = 1;
+    assert_true(vigil_persistence_degraded(&h, &s, false, 2));
 }
 int main(void)
 {

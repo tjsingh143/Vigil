@@ -1,3 +1,235 @@
+# Vigil Resilience state — Stage 2 COMPLETE
+
+**Stage 2 PASS — PostgreSQL replay and reconciliation accepted.** One Codex
+agent only; no delegation or other Codex instances. Started on clean main at
+`dd2773c`. The owner authorized this implementation, isolated Linux/PostgreSQL
+tests, documentation and a safe local commit. No deployment, production migration,
+production-data change, push or publication. **Stop here; do not start Stage 3.**
+
+## Completed functionality
+
+The SQLite owner selects the oldest durable spool order, copies its immutable
+payload after ending the read statement, and dispatches one bounded mailbox.
+The separate PG owner retains asynchronous libpq deadline/flush/result handling.
+Main keeps CAN/timer/signals, live alarms and the systemd watchdog. No SQLite,
+fsync or PG I/O runs under queue/mailbox locks. Remote waits/backoff cannot block
+local admission; a local retirement error specifically pauses further mutation
+until its acknowledgement is reconciled and published consistently.
+
+Migration [002](../migrations/002_resilience.sql) adds original run origins and
+exact byte receipts. Its invoker replay function validates original JSON,
+serializes v2 clients per run, reuses unchanged `write_batch(jsonb)`, compares
+all history columns and commits the checkpoint/receipt atomically. Equal bytes
+succeed; conflicting identity/content is VG001; malformed input is VG002. There
+is no fallback to v1 ingestion. Migration 001, sensor/protocol/config source,
+wire vectors and the service unit remain unchanged.
+
+Only validated inserted/equal success through ReadyForQuery/idle can retire the
+matching SQLite head. Deletion, prefix/usage/lifetime totals and that origin's
+loss/revision cursors commit together with FULL/directory sync. Every failed
+retirement COMMIT/sync requires a recovery sealing barrier before prefix-based
+acknowledgement. New processes preserve old run/token/boot/times, IDs, payloads,
+alarms and gaps; they never restore old live sensor state. Old-run retirement
+cannot advance current-run health/written cursors.
+
+One held admission and one shared/PG replay copy bound work memory. Existing
+record/batch/byte and DB/WAL/SHM limits remain; no durable eviction. Transient
+retries use 1/2/4/8/16/30-second delays capped at 30, unaffected by enqueues.
+Configuration retries use 30 seconds; poison heads latch until repair/restart.
+Capability probes require schema 2 and PG durability settings. Shutdown retains
+the shared one-second best effort and systemd's three-second force-stop bound.
+Operation, grants and recovery details: [OUTBOX.md](OUTBOX.md). Justified interface,
+startup-classification and scheduling refinements are in the architecture and
+contract amendments.
+
+## Baseline and complete clean gate
+
+The full brief v3, instructions, state/contracts/architecture, Stage 1 changes
+and actual source were reviewed. The unchanged Stage 1 Debug core durability
+suite passed before remote implementation; the remaining detached baseline gate
+finished while implementation continued. All 55 baseline commands passed,
+2026-10-23 18:45:08.249101–18:56:38.161383 UTC. Baseline source digest:
+`706261f8fdf7f2302b185bf0ac26b0891ec71f14222c03276d63298dcf3019a2`.
+Raw baseline: `artifacts/resilience-stage2-baseline/` and its adjacent log.
+
+The final complete clean gate ran from the isolated native Linux source copy:
+
+```sh
+./scripts/dev sh -c 'cd /tmp/vigil-stage2-final-source; ./scripts/check-resilience --clean --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage2/final7'
+```
+
+**All 61 commands exited zero**, `2026-10-24T02:25:29.975538+00:00` through
+`2026-10-24T02:38:55.042373+00:00`. The source-unchanged assertion passed.
+Tested parent: `dd2773c`; workspace/native implementation SHA-256:
+
+`d67373a3641414533e7189648a2dd2c8946929a61c16598ebe5edb5a103e8399`.
+
+Exact argv/expectations/exits/times/logs: `artifacts/resilience-stage2/final7/gate.json`;
+console: `artifacts/resilience-stage2/final7.log`. Docs/state are excluded from
+the digest to avoid circular reporting. The reviewed local commit is identified
+by `git log -1 --oneline`; its hash is supplied in the delivery response.
+Ubuntu 24.04 ARM64/ext4, Linux 6.8.0-142-generic, SQLite 3.51.3,
+PostgreSQL/libpq 16.15 and systemd 255 were actually used.
+
+## Exact failure boundaries proved
+
+| Boundary | Controlled cut and observed assertion |
+| --- | --- |
+| A | Pipe hook after local COMMIT/directory sync, before publication; offline endpoint; SIGKILL. No remote record submission; exact local rows/origin/bytes survive. |
+| B | Disposable PG trigger pauses after history insertion before checkpoint. Observer sees advisory wait, terminates that backend. Run/origin/history/checkpoint/receipt all absent, local head retained; healthy retry commits the whole batch. |
+| C | Real-PG proxy suppresses replay response through ReadyForQuery; independent SQL observer verifies exact committed receipt. SIGKILL before client success: 20 Debug plus two per other build, **26 kills**. |
+| D | Three kills per build at `after_remote_confirm_before_result`, and three at `before_retire_begin`. Local head remains and retries to equal receipt. |
+| E | Three kills per build at `after_retire_delete_before_commit`. Recovered SQLite rolls back DELETE/counters; unchanged head retries safely. |
+| F | Three kills per build at `after_retire_commit_before_publish`. Committed prefix/totals advance once; deleted head stays absent after restart. D/E/F comprise **48 exact cut kills**. |
+| G | Proxy captures identical original byte parameters across multiple retries: **23 Debug, five each Release/ASan/TSan (38 total)**. One remote receipt/history effect per identity. |
+| H | Every seeded restart retains original run/token/boot/start/observation/seq/batch/order metadata. New startup UUID differs; old replay never initializes current readings. |
+| I | PG head paused before send while **64 new readings commit locally**. FIFO drains original eight plus new 64; no history/snapshot duplication, and current-run health catches up separately. |
+| J | VG001 and PG CHECK 23514 latch the daemon head after one submission, retain exact local bytes and permit bounded admission/volatile overflow. Explicit fixture repair/restart drains unchanged. Direct invoker tests reject 18 malformed payload forms with VG002 and atomic rollback. |
+
+Local Stage 1 cuts also repeat in all four builds: 20 repetitions at four
+admission cuts plus origin commit in Debug, two each elsewhere: **130 local
+transaction/origin SIGKILLs**, with direct stopped DB/WAL inventories.
+Test controls/dispatch/VFS are absent from production binaries.
+
+## Observed database and accounting assertions
+
+Every fixture compares receipt bytes, full original identities, typed logical
+history columns/timestamps, origin metadata, complete alarm snapshots and exact
+gap totals. Remote unique key sets equal expected durable record sets; all
+history/checkpoint/receipt counts match. Final healthy fixtures have exactly
+zero pending records, batches and payload bytes; admitted = retired = remote
+logical history. SQLite order prefixes, origin pruning and usage reconcile.
+
+| Build | C kills / identical attempts | C unique history / receipts | I readings / history | Outage conservation | Consistent uncertain-ack status pairs |
+| --- | --- | --- | --- | --- | --- |
+| debug | 20 / 23 | 38 / 27 | 72 / 79 | 40 + 60 = 100 | 22 |
+| release | 2 / 5 | 17 / 9 | 72 / 79 | 40 + 60 = 100 | 22 |
+| asan | 2 / 5 | 17 / 8 | 72 / 79 | 40 + 60 = 100 | 23 |
+| tsan | 2 / 5 | 17 / 9 | 72 / 79 | 39 + 61 = 100 | 23 |
+
+The outage fixture uses a 40-record test cap (above the maximum 32-record
+candidate) and a four-reading RAM lane. Known reading losses equal PG gap sums;
+event losses were zero. Recovery clears degraded after all current cursors and
+backlog catch up. Metadata grouping/receipt counts can vary with scheduling;
+each admitted batch remains byte-identical over retry/restart.
+
+All four maximum-snapshot fixtures produced exactly **162 history rows**:
+64 readings, 32 heartbeats, 32 high raises, 32 high clears and two degraded
+transitions. Snapshots each have 193 unique alarm entries. No history dropped.
+The forced lost-local-retirement-confirmation regression delivered twelve
+readings and checked every captured spool/current-run conservation equation;
+no inconsistent pair remained. Restart completed all pending work.
+
+Debug transient retry intervals were **1.037, 2.099, 4.048, 8.053, 16.081, 30.059, 30.140 seconds**;
+permission retry was **30.070 s**.
+Missing migration 002, then fsync/full_page_writes off, produced zero remote
+submissions/effects while five readings committed locally. Healthy restoration
+replayed all five and left pending=0. The two new invoker functions have no
+PUBLIC EXECUTE; runtime has no UPDATE/DELETE/DDL privilege.
+
+## Regression results
+
+- Debug/Release GCC, Clang ASan+UBSan and GCC TSan each passed 65 C cases
+  (13 protocol, 26 monitor, six queue, 20 outbox). The CI script repeated two
+  unit builds: **390 C executions**, plus separate Helgrind cases. No sanitizer
+  finding observed; system libraries were not rebuilt with instrumentation.
+- Seven Python cases passed in the main gate and again in CI. Five v1 PG
+  contracts and ten v2 contracts passed twice; the latter include concurrent
+  equal/conflicting batch/event clients, origin collisions, legacy checkpoint
+  rejection, exact receipt bytes and whole-statement rollback.
+- Real vcan decoder runs passed in Debug/Release/ASan; live monitoring, local
+  fault/capture/capacity/restart and new remote suites passed in all four builds.
+  No mandatory command was skipped; TSan uses setarch only for its subprocess
+  tree, leaving global ASLR unchanged.
+- Lock/statement/blackhole shutdowns in all builds were below 1.25 s; largest
+  observed was **1.083038 s**. Actual ext4 ENOSPC returned SQLITE_FULL=13,
+  published no failed-call durability, preserved high/stale monitoring and
+  stopped in **1.020697 s**. Final recovered three
+  records matched the final confirmed local count; a later retry reused allocated
+  pages. Read-only startup exited 2/no READY with five prior records intact.
+- The temporary hardened UID 501 systemd unit passed READY, SIGKILL restart,
+  main-loop watchdog restart and clean stop; nine committed records survived
+  with exact payloads. No temporary unit/mount/daemon remains. Default vigild
+  stayed inactive; 16/main PG stayed online. No production install/data change.
+- Helgrind queue and two-owner handoff checks returned zero unsuppressed errors.
+  `tests/helgrind.supp` scopes only p11-kit ELF-finalizer mutex diagnostics and
+  glibc internal replacement wakes, never Vigil races/direct lock/signal calls.
+  Strict GCC analyzer, shell syntax, independent can-utils exchange and diff
+  whitespace checks passed. Local Markdown targets were checked separately.
+- Silence alarms were **500 ms** for each of three sources at a 500 ms deadline,
+  20 ms tick. Natural load: **46839 received + 3162 kernel drops = 50001 sends**,
+  46804 accepted readings + one heartbeat + 34 rejects; zero missed ticks.
+  Forced overflow: **223 + 49778 = 50001**, one missed tick. Inferred sequence
+  loss is separate and is not added to socket drops. Persistence was disabled;
+  these finite vcan loads establish no physical/sustained throughput claim.
+- Decoder fuzz: **89,032,894 inputs in 121 reported seconds**, RSS 313 MiB,
+  slowest-unit 0 s, no crash/sanitizer/invariant failure. CI also passed its
+  shorter fuzz smoke. Hosted GitHub CI was not run or claimed for this commit.
+
+## Defects fixed, review and retained attempts
+
+The maximum-snapshot gate found healthy buffering re-raising degraded while
+persisting its clear transition; backlog now holds an existing degradation,
+while failures/new losses raise it. Initial snapshot gating also prevents a PG
+probe racing main's first health publication. Query failures immediately after
+connect are classified as query failures. PG idle/backoff scheduling is separate
+from producer condition signals; submission rechecks the shutdown deadline.
+
+A controlled lost-retirement-confirmation test reproduced inconsistent spool
+vs current-run counters when a new append recovered the committed prefix before
+pending acknowledgement publication. Storage now reconciles/publishes that
+result before another mutation; the integrated regression covers arrivals,
+unknown local completion and restart. Failed retirement COMMIT/sync always seals
+recovery before acknowledgement. Recovery errors roll back active transactions;
+allocation guards and lifetime signed-count exhaustion are explicit. Validation
+resource errors retain retryable SQLSTATEs rather than being relabeled poison.
+
+Fixture corrections: tolerate disappearing ephemeral PG FDs in non-atomic /proc
+enumeration while retaining timerfd/signalfd checks; require current expected
+reading counts rather than an older caught-up status; use a test cap that can
+fit a whole candidate; compare ENOSPC final committed inventory with final status
+because allocated DB/WAL pages may be reused. A first retry-timing fixture filled
+4096 batches and exceeded its arbitrary 40-second drain wait; the timing test now
+uses four arrivals/second to isolate backoff. No production delivery deadline was
+weakened or benchmark claim added.
+
+Earlier dev and final1–6 attempts are preserved under `artifacts/resilience-stage2/`;
+some were stopped for confirmed fixes, others failed the stated fixture oracle.
+They are not counted as complete gates. Test-only orphan CAN processes after
+one interruption were explicitly stopped before the final run; final inventories
+and results above come only from the complete, otherwise-idle-bus final7 gate.
+Final diff/source review covered ownership/lock ordering, commit ambiguity,
+error/rollback paths, origin scoping, resource bounds, shutdown and lifetime cleanup.
+
+## Evidence preservation and limits
+
+Native DB/WAL/SHM inventories remain at the nine paths listed in
+`final7/native-evidence-paths.json`. A portable offline archival copy is
+`artifacts/resilience-stage2/final7/native-inventories.tar.gz`,
+**6511398 bytes**, SHA-256
+`110d1a6dd688562d5e8bcafe90c8afa5eb5adb5783ee496548cc907d4ec564fd`. SQL exports, exact hook tokens, binary digests and per-case
+counts are in each build's result.json and daemon transcripts.
+
+SIGKILL/VFS tests prove process recovery, not power-cut/media-loss survival.
+Honest local/remote storage, flushes and PG durability configuration remain
+assumptions. Kernel/credential-file stalls can exceed application deadlines;
+systemd provides the force-stop bound. Only Ubuntu ARM64/ext4 ran; XFS and
+hardware portability are unqualified. Conservative physical maxima were not
+simultaneously stress-filled. Queued/held inputs remain volatile, and unsaved
+crash losses cannot be reconstructed. A poison head intentionally blocks FIFO;
+remote receipts/history have no automatic retention. No unconditional delivery
+latency, exactly-once network transmission or absence-of-all-races claim.
+
+No confirmed Stage 2 implementation defect remains unresolved in the tested
+scope. Scoped system-library Helgrind diagnostics remain a tooling limitation.
+The 60-second persistence benchmark/further instrumentation, hardware power
+qualification, new products and Stage 3 remain deferred. **Stage 2 PASS; stop
+following the local checkpoint commit. Do not deploy, push or publish.**
+
+---
+
+# Historical Stage 1 and architecture checkpoints
+
 # Vigil Resilience state
 
 ## Authorized scope and final status

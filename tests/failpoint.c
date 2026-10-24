@@ -9,7 +9,7 @@ static _Thread_local char injected;
 
 void vigil_test_hook(const char *name)
 {
-    static unsigned hits;
+    static _Thread_local unsigned hits;
     const char *selected = getenv("VIGIL_TEST_HOOK");
     if (selected == NULL || strcmp(selected, name) != 0) return;
     const char *nth = getenv("VIGIL_TEST_HIT");

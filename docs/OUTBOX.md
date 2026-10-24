@@ -1,4 +1,4 @@
-# Stage 1 local durable outbox
+# Durable outbox and Stage 2 PostgreSQL replay
 
 Stage 1 replaces the volatile PostgreSQL writer with a dedicated SQLite owner.
 The CAN poll loop, live alarms, freshness, progress, plausibility, decoder and
@@ -6,13 +6,52 @@ wire protocol remain unchanged. Main copies bounded records and snapshots;
 it never opens SQLite, syncs storage or waits for a commit. Every SQL/fsync
 boundary checks the owner and that the caller holds no queue mutex.
 
-**Remote replay is deferred.** No PostgreSQL transmission, receipt verification,
-retirement, deletion, migration 002 or remote health probe is implemented here.
-The legacy `records_written/readings_written` counters remain zero. Durable
-backlog stays local, and persistence-degraded remains raised because remote
-history is unavailable. Existing database environment variables are validated
-for CLI compatibility but no PG connection is opened. Migration 001 and its
-five standalone database contracts are retained unchanged.
+A separate PostgreSQL owner now replays SQLite batches in increasing spool
+order, including prior runs. It uses the original asynchronous libpq connection,
+flush and result machinery with two-second deadlines and <=50 ms socket polls.
+Neither SQLite nor network I/O runs under queue/mailbox locks. The storage
+worker handles one result, one admission and one dispatch each turn; a remote
+retry never blocks new local admission. One held admission, one shared replay
+payload and one PG copy bound application work memory independently of backlog.
+
+Migration [002_resilience.sql](../migrations/002_resilience.sql) adds origin
+verification and exact byte receipts. The invoker `replay_batch(bytea)` validates
+JSON (including duplicate keys before JSONB conversion), takes a transaction run
+lock, verifies the original origin, and reuses unchanged `write_batch(jsonb)`.
+It compares every history column after that function and inserts a receipt in
+the same transaction. Equal receipts return `equal`; mismatched origins, receipt
+bytes, history or unverified legacy checkpoints raise VG001. Malformed content
+raises VG002. All effects roll back on failure. V1-only contracts still test 001
+alone; v1 ingestion of unrelated legacy runs remains compatible.
+
+The owner applies 001 then 002 explicitly, or runs `scripts/setup-database` only
+when deployment is authorized. New objects require SELECT/INSERT and EXECUTE on
+`validate_replay(bytea)` and `replay_batch(bytea)`; no runtime UPDATE/DELETE/DDL.
+PUBLIC has no new-function EXECUTE. No daemon startup applies migrations. Session
+synchronous_commit is on; capability probes require schema 2, fsync and
+full_page_writes on. There is no v1 fallback.
+
+After complete validated success through ReadyForQuery/idle, the storage owner
+accepts only the matching oldest order/run/batch/count and payload. One FULL
+transaction deletes that batch, advances the retired prefix, decrements usage,
+advances that origin's retired counters/loss/revision and prunes empty old
+origins. Directory sync precedes publishing acknowledgement/releasing the slot.
+Death or local I/O uncertainty before this boundary retains a safe retry or
+resolves the committed prefix through validation and a FULL recovery barrier.
+Restart never rebuilds or renames old batches. A committed retirement never
+resurrects its rows. SQLite schema 1 remains compatible with Stage 1 pending
+stores; Stage 1 binaries deliberately refuse stores with nonzero retirements.
+
+Transport errors after submission are UNKNOWN, even if PG may have committed.
+Retries carry identical bytes and identity, with 1/2/4/8/16/30-second delays capped
+at 30, measured after failure. Enqueues cannot shorten them. Configuration,
+capability and permission failures retry every 30 seconds. Since libpq exposes
+no SQLSTATE for startup ErrorResponse, a connection rejected/stalled after the
+server handshake uses 08004 and a conservative 30-second delay; failure before
+handshake uses transport backoff. Poison VG001/VG002 and data/constraint failures
+latch replay until explicit restart after operator investigation. They never
+skip a head, split a batch or evict durable data. Local admission continues to
+its fixed limits. Idle liveness probes create no empty history batches.
 
 ## Provision and operate
 
@@ -112,7 +151,7 @@ max_page_count=131072, wal_autocheckpoint=0, journal_size_limit=4194304,
 cache_size=-2048, cache_spill=OFF, mmap_size=0, temp_store=MEMORY, busy_timeout=0.
 Idle housekeeping runs PASSIVE each second. A failed checkpoint freezes further
 mutations; TRUNCATE must succeed before resuming. Close attempts TRUNCATE.
-Freed pages are not currently relevant because Stage 1 never retires records.
+Freed pages are reused after retirement; DB file shrinkage is not promised.
 Storage assumptions include working SQLite/kernel/fsync/directory sync and
 media honoring flushes. Tests prove process-crash recovery, not power-cut or
 media-failure survival. Kernel I/O stalls can exceed the application drain
@@ -121,17 +160,18 @@ budget; systemd then supplies its force-stop deadline.
 ## Status and shutdown accounting
 
 `persistence` retains volatile lane/held/drop fields. A separate `outbox` line
-exposes local_state, remote_state=deferred, current-run local_committed and
+exposes local_state, remote_state=disconnected/pending/unknown/confirmed/poison, current-run local_committed and
 local_readings, durable_pending, pending_batches/bytes, spool_admitted/retired,
 local_failures, extended sqlite_error, reading/event evicted/rejected,
-local_revision and count_exact. Error output contains codes, not SQL text or
+local_revision, oldest_order, replay_attempts and count_exact. The persistence
+line's records_written/readings_written and acknowledged revision/loss cursors
+belong to the current origin; old-run retirement changes spool totals only. Error output contains codes, not SQL text or
 credentials. Status may lag committed DB/WAL evidence and diagnostics may drop.
 
 For each lane, queued = evicted + pending + held + locally_committed. Resource
 rejection is separate from successfully queued inputs; dropped includes eviction
-and resource rejection. Closed publication is a distinct result. Current local
-commits equal current durable pending; spool_admitted equals spool_pending,
-since retirement remains zero. Metadata-only batches consume batch/byte capacity,
+and resource rejection. Closed publication is a distinct result. Current local commits equal current durable pending plus current-run retired
+records. Spool admitted equals durable pending plus lifetime spool retired. Metadata-only batches consume batch/byte capacity,
 not history-record counts. Copied losses/revisions commit once and later
 changes wait for a newer immutable batch. An initial complete snapshot gates
 admission. Snapshot history need not describe every intermediate transition.
@@ -150,11 +190,42 @@ saved in gate.json/logs; native SQLite inventories retain DB/WAL/SHM and full
 payloads under the reported Linux evidence path. The test dispatcher/VFS and
 its environment controls exist only in test targets, never the installed binary.
 
-The original release verifier, PG writer scenarios and demo remain historical
+The original release PG writer scenarios and demo remain historical
 fixtures for the archived 1.0 implementation. Stage 1 replaces their PG outage
-assumptions with local-capacity/crash assertions; it does not claim remote
-backfill, receipt verification or retirement works. The current gate preserves
+assumptions with local-capacity/crash assertions; the new Stage 2 fixtures assert durable replay, receipt verification and retirement. The current gate preserves
 original unit, Python, vcan, monitoring, finite load, manual, fuzz and v1 SQL
-contracts, plus local fault/recovery/supervision tests. Stage 2 T06–T09/T11/T16
-and remote parts of other T01–T20 cases remain deferred. Hardware/power-cut
+contracts, plus local fault/recovery/supervision tests. Stage 2 adds real PG rollback/ambiguity/retirement/crash/FIFO/poison/deadline
+and concurrency contracts in `tests/resilience_replay.py` and
+`tests/resilience_database_contract.py`. Hardware/power-cut
 qualification and the remote 60-second benchmark remain unclaimed.
+
+## Replay lifecycle and accounting
+
+Current-run `locally_committed = current durable pending + records_written`.
+Spool `admitted_records = pending_records + retired_records`. Reading equations
+use corresponding reading counts. `queued = evicted + pending RAM + held +
+locally_committed`; resource rejections and closed publications remain separate.
+An unknown remote outcome is part of durable pending, not another input.
+Metadata-only batches count against batch/byte limits, not history rows.
+
+Main raises degraded on remote/local failure, poison, unknown or newly observed
+loss. It clears only when local/remote health, all backlog and the current run's
+loss/revision have caught up. Old-run acknowledgements cannot advance the new
+run's cursors or restore sensor state. Recovery captures current health/snapshot
+in a coalesced new batch; it never edits the retry. Completed outages and known
+gaps are historical evidence, not a reconstruction of unsaved crash losses.
+
+Shutdown gives both owners the existing shared one-second budget. PG stops
+network work by that deadline; storage prioritizes local admission and handles
+available results. Both workers join before their queue/mailbox is destroyed.
+An unprocessed success leaves the durable row for safe restart verification.
+Kernel disk stalls and local credential-file reads remain outside application
+bounds; systemd retains its three-second force-stop and main-only watchdog.
+Durable backlog is deferred; only queued/held RAM counts as abandoned.
+
+The PG scheduler polls its bounded mailbox with <=10 ms monotonic sleeps;
+producer condition signals belong to the storage waiter. Active network I/O
+retains <=50 ms deadline/shutdown polls. Test Helgrind uses a narrow suppression
+for libp11-kit ELF-finalizer mutex diagnostics and glibc internal replacement
+wakes from timed waits; no Vigil race, lock-order or direct mutex/signal call
+is suppressed. System-library internals are outside sanitizer proof.

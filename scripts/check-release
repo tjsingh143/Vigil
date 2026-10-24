@@ -7,7 +7,7 @@ if [[ ${1:-} == --clean && $# == 1 ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check-release [--clean]' >&2; exit 2
 fi
-printf 'EXPECT: optimized Release build; 60 cmocka cases; real decoder, monitoring and local durability regressions all pass.\n'
+printf 'EXPECT: optimized Release build; 65 cmocka cases; real decoder, monitoring and local durability regressions all pass.\n'
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release --parallel 2
 ctest --test-dir build-release -V
@@ -15,3 +15,6 @@ ctest --test-dir build-release -V
 .venv/bin/python tests/integration.py --decoder build-release/vigil-decode
 .venv/bin/python tests/monitor_integration.py --daemon build-release/vigild
 .venv/bin/python tests/resilience_integration.py --build build-release --output "artifacts/release-outbox-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2
+
+.venv/bin/python tests/resilience_database_contract.py
+.venv/bin/python tests/resilience_replay.py --build build-release --output "artifacts/replay-$(date -u +%Y%m%dT%H%M%SZ)" --restarts 2

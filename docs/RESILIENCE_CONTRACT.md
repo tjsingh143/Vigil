@@ -1,7 +1,7 @@
 # Vigil Resilience failure contract — Stage 0B
 
 Contract version 1, 2026-10-22 America/Los_Angeles. **Design acceptance criteria;
-the full target, with only local Stage 1 implemented. Current scope and
+the full target; local Stage 1 and remote Stage 2 are implemented. Current scope and
 evidence are in [OUTBOX.md](OUTBOX.md) and [RESILIENCE_STATE.md](RESILIENCE_STATE.md).**
 [RESILIENCE_ARCHITECTURE.md](RESILIENCE_ARCHITECTURE.md) specifies the schema,
 algorithms, numeric bounds and file interfaces. This document defines observable
@@ -160,7 +160,7 @@ exits nonzero on a failed assertion, and saves SQL/local inventory plus exact
 binary/source digest and failpoint tokens. 'Local inventory' is a stopped,
 recovered SQLite DB with schema/origin/order/payload/counter checks. Tests compare
 full identities and bytes, not merely aggregate row counts. This is the full target matrix. Stage 1's local subset and observed results
-are recorded in RESILIENCE_STATE.md; remote assertions remain future work.
+are recorded in RESILIENCE_STATE.md; remote crash/commit assertions are implemented by Stage 2.
 
 | Test | Deterministic setup | Machine-checkable assertion |
 | --- | --- | --- |
@@ -225,3 +225,27 @@ for migration 001, not proof of v2 replay. Local admission never increments
 remote-written counters. Durable older history remains pending at capacity;
 only volatile inputs can be rejected/evicted. Production/test artifacts remain
 separate. SIGKILL evidence does not qualify hardware power-loss behavior.
+
+## Stage 2 acceptance slice and justified refinements
+
+Stage 2 implements remote rollback/ambiguity, origin/content equality and
+conflicts, FIFO replay across runs, atomic local retirement/recovery, bounded
+retries, poison handling, independent admission, lifecycle and bounded shutdown.
+`tests/resilience_replay.py` maps the owner's A-J boundaries to deterministic
+pipe hooks or a real-PG transaction pause/response-withholding proxy. Direct
+inventories and SQL reconcile keys, payload bytes, history, snapshots, gaps,
+pending/retired prefixes and counts. `resilience_database_contract.py` tests
+repeatable 001+002, runtime privileges, concurrent equality/conflicts and rollback.
+Current observed results are in RESILIENCE_STATE.md; matrix entries are design
+requirements, not evidence by themselves.
+
+The architecture amendment records the auxiliary invoker validator, conservative
+30-second classification of post-handshake startup failures (libpq has no startup
+SQLSTATE accessor), and retention of late shutdown results for next-start replay.
+No success or local retirement follows an incomplete remote response. None of
+these refinements weakens payload identity or the local durability boundary.
+
+The Stage 3 persistence benchmark/instrumentation, hardware power cuts, physical
+CAN qualification and remote retention remain outside this checkpoint. Stage 2
+acceptance does not claim every optional/full-target matrix workload was run.
+Stop after the local Stage 2 commit; no Stage 3, deployment or publication.

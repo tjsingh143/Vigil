@@ -14,11 +14,12 @@ if [[ $(sudo -u postgres psql -Atc "SELECT count(*) FROM pg_database WHERE datna
     sudo -u postgres createdb vigil
 fi
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d vigil < migrations/001_history.sql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d vigil < migrations/002_resilience.sql
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d vigil <<'SQL'
 REVOKE ALL ON SCHEMA vigil FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION vigil.write_batch(jsonb) FROM PUBLIC;
 GRANT CONNECT ON DATABASE vigil TO vigil;
 GRANT USAGE ON SCHEMA vigil TO vigil;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA vigil TO vigil;
-GRANT EXECUTE ON FUNCTION vigil.write_batch(jsonb) TO vigil;
+GRANT EXECUTE ON FUNCTION vigil.write_batch(jsonb),vigil.validate_replay(bytea),vigil.replay_batch(bytea) TO vigil;
 SQL

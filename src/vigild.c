@@ -1,6 +1,7 @@
 #include "vigil/monitor.h"
 #include "vigil/persistence.h"
 #include "vigil/outbox.h"
+#include "vigil/replay.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -193,16 +194,16 @@ static void persistence_status(struct diagnostics *d, uint64_t now)
         s.outage_started_ms != 0 ? now - s.outage_started_ms : 0,
         s.outage_total_ms, s.last_outage_ms, s.gap_markers, s.snapshots_written, s.last_error[0] == '\0' ? "none" : s.last_error,
         d->persisted_revision, s.acknowledged_revision, s.abandoned_readings, s.abandoned_events);
-    emit(d, "outbox run_id=%s local_state=%s remote_state=deferred local_committed=%" PRIu64
+    emit(d, "outbox run_id=%s local_state=%s remote_state=%s local_committed=%" PRIu64
         " local_readings=%" PRIu64 " durable_pending=%" PRIu64 " pending_batches=%" PRIu64
         " pending_bytes=%" PRIu64 " spool_admitted=%" PRIu64 " spool_retired=%" PRIu64
         " local_failures=%" PRIu64 " sqlite_error=%d reading_evicted=%" PRIu64
         " event_evicted=%" PRIu64 " reading_rejected=%" PRIu64 " event_rejected=%" PRIu64
-        " local_revision=%" PRIu64 " count_exact=%u\n", d->persistence->run_id,
-        vigil_store_name((enum vigil_store_result)s.local_state),s.locally_committed,s.locally_committed_readings,
+        " local_revision=%" PRIu64 " replay_attempts=%" PRIu64 " oldest_order=%" PRIu64 " count_exact=%u\n", d->persistence->run_id,
+        vigil_store_name((enum vigil_store_result)s.local_state),vigil_remote_name(s.remote_state),s.locally_committed,s.locally_committed_readings,
         s.durable_records,s.durable_batches,s.durable_bytes,s.spool_admitted,s.spool_retired,
         s.local_failures,s.sqlite_error,s.readings_evicted,s.events_evicted,s.readings_rejected,s.events_rejected,
-        s.local_revision,(unsigned)s.count_exact);
+        s.local_revision,s.replay_attempts,s.oldest_pending_order,(unsigned)s.count_exact);
 }
 
 static void persistence_update(struct diagnostics *d, const struct vigil_monitor *m, uint64_t now)
@@ -422,7 +423,7 @@ int main(int argc, char **argv)
     uint64_t last_status = now;
     persistence_update(&diagnostics, &monitor, now);
     last_watchdog = now;
-    (void)sd_notify(0, "READY=1\nSTATUS=Monitoring CAN; local outbox ready; remote replay deferred");
+    (void)sd_notify(0, "READY=1\nSTATUS=Monitoring CAN; local outbox ready; remote replay active");
     fprintf(stderr, "ready interface=%s pods=%zu pid=%ld\n", interface,
             config.pod_count, (long)getpid());
     snapshot(&diagnostics, &monitor, now);

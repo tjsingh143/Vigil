@@ -2,7 +2,7 @@
 
 Design version 1, 2026-10-22 America/Los_Angeles. **Full architecture target.**
 Stage 1 local implementation/status: [OUTBOX.md](OUTBOX.md),
-[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Remote sections remain future work.
+[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Stage 2 replay is implemented; current operation and refinements are in OUTBOX.md and the amendment below.
 The normative failure meanings and acceptance tests are in
 [RESILIENCE_CONTRACT.md](RESILIENCE_CONTRACT.md); actual baseline evidence is in
 [RESILIENCE_BASELINE.md](RESILIENCE_BASELINE.md). The owner subsequently authorized Stage 1 implementation and daemon integration.
@@ -454,3 +454,55 @@ retirement before using them. An additional immutable-origin trigger and exact
 schema validation strengthen the specified identity constraints. Current code
 and test entrypoints are documented in OUTBOX.md; historical release evidence
 and original PG scenarios are retained separately.
+
+## Stage 2 implementation amendment (2026-10-23)
+
+The owner authorized the remote worker, migration 002, retirement/reconciliation
+and A-J crash evidence. Earlier Stage 1 stopping/scope statements are historical.
+The local schema remains version 1; its existing prefix/retirement columns now
+support pending Stage 1 stores without a destructive migration. Validation
+accounts for the contiguous retired prefix, remaining sequence/batch suffix,
+per-origin loss/revision cursors and lifetime conservation. Empty old origins
+are pruned after retirement. No record is reconstructed under a new run.
+
+The new replay function reuses `write_batch` for its unchanged projection, then
+compares every history column before inserting its exact byte receipt. This
+keeps deployed 001 byte-identical. A separate invoker `validate_replay(bytea)`
+checks original JSON and integer spellings; the runtime needs EXECUTE on both
+new functions. Data/validation errors fail closed; server resource/locking
+errors retain their original SQLSTATE and remain retryable.
+
+Libpq does not expose startup ErrorResponse SQLSTATE through its connection
+API. Pre-handshake connection failures use transport backoff; rejection or a
+stall after the handshake conservatively uses 08004/30 seconds. Established
+query transport failures use the specified exponential schedule. This refinement
+avoids parsing localized/credential-bearing error messages and bounds auth
+retries. Numeric/Unix endpoints and two-second I/O deadlines remain unchanged.
+
+Storage requests replay stop when its drain ends; an in-flight PG result that
+arrives after storage closes remains unretired for safe verification next start.
+Both threads join before shared memory destruction. This is a safe refinement
+of the proposed PG-then-final-storage drain: no additional SQLite transaction
+is started after the shared deadline to retire a late result. Kernel/local-file
+stalls remain outside application time bounds.
+
+`records_written/readings_written` and loss/revision acknowledgements remain
+current-origin process counters. Replayed old origins update lifetime spool
+retirement, never the new process's observation equations or live health cursor.
+The 60-second persistence benchmark and further instrumentation are deferred;
+Stage 2 does not authorize Stage 3 or a performance/physical CAN claim.
+
+PG's idle/backoff scheduler uses monotonic absolute sleeps of at most 10 ms,
+separate from the storage queue condition waiter. Thus producer signals cannot
+wake a retry early or compete for the storage wakeup. Active libpq I/O still
+uses deadline-aware socket polling at <=50 ms. Submission checks the shared
+shutdown deadline immediately before connect/query dispatch. Storage can wake
+immediately for a full admission batch while fault/shutdown waits remain paced.
+
+A local retirement failure holds the successful result and pauses further
+SQLite mutation until its retry reconciles and publishes the prefix/cursors.
+This prevents a new admission publishing committed spool retirement before the
+current-run acknowledgement counters. Remote failure/backoff still permits
+independent local admission; this pause is specifically a local-storage fault.
+Every failed retirement COMMIT/sync forces recovery sealing before prefix-based
+acknowledgement, even when the original error was FULL/BUSY rather than IOERR.

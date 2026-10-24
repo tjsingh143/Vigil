@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Clean Stage 1 gate; keeps original sensor/protocol/v1-PG contracts and adds
-local durability gates. No Stage 2 replay assertions or generated release report.
+"""Clean Stage 2 gate; keeps original sensor/protocol/v1-PG contracts and adds
+local durability and PostgreSQL reconciliation gates. No Stage 3 benchmark.
 """
 import argparse
 from datetime import datetime, timezone
@@ -48,6 +48,7 @@ def main():
     run("real Linux vcan0, otherwise idle", ["./scripts/vcan-up"])
     run("seven existing Python cases", [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
     run("five original PostgreSQL v1 schema/transaction/permission contracts on disposable server", [".venv/bin/python", "tests/database_contract.py"])
+    run("ten PostgreSQL v2 origin/content/concurrency/atomicity contracts on 001+002", [".venv/bin/python", "tests/resilience_database_contract.py", "--output", str(out / "sql-v2")])
     builds = [("debug", "Debug", "gcc", []), ("release", "Release", "gcc", []),
               ("asan", "Debug", "clang", ["-DVIGIL_SANITIZERS=ON"]),
               ("tsan", "Debug", "gcc", ["-DVIGIL_TSAN=ON"])]
@@ -58,7 +59,7 @@ def main():
         run(f"strict {name} configure", ["cmake", "-S", ".", "-B", build, "-DCMAKE_BUILD_TYPE=" + kind, "-DCMAKE_C_COMPILER=" + cc, *flags])
         run(f"strict {name} build, no warnings", ["cmake", "--build", build, "--parallel", "2"])
         prefix = ["setarch", platform.machine(), "-R"] if name == "tsan" else []
-        run(f"60 C cases: 13 protocol, 26 monitor, 6 queue, 15 local outbox; zero sanitizer findings ({name})",
+        run(f"65 C cases: 13 protocol, 26 monitor, 6 queue, 20 outbox; zero sanitizer findings ({name})",
             [*prefix, "ctest", "--test-dir", build, "-V"])
         if name != "tsan":
             run("unchanged real SocketCAN decoder regression (" + name + ")", [".venv/bin/python", "tests/integration.py", "--decoder", build + "/vigil-decode"])
@@ -66,6 +67,9 @@ def main():
         run("exact crash cuts, stable DB/WAL payloads, capture races, faults, priority and startup (" + name + ")",
             [*prefix, ".venv/bin/python", "tests/resilience_integration.py", "--build", build, "--output", str(out / name),
              "--restarts", "20" if name == "debug" else "2"])
+        run("A-J exact remote crash/commit cuts, FIFO/origin/poison/outage/deadline assertions (" + name + ")",
+            [*prefix, ".venv/bin/python", "tests/resilience_replay.py", "--build", build, "--output", str(out / (name + "-replay")),
+             "--restarts", "20" if name == "debug" else "2", *(["--timing"] if name == "debug" else [])])
     run("real ext4 ENOSPC/read-only and unprivileged hardened systemd SIGKILL/watchdog recovery",
         [".venv/bin/python", "tests/resilience_storage.py", "--build", "build-resilience-debug", "--output", str(out / "physical")])
     for scenario in ("silent-pod", "malformed", "non-advancing", "counter-jump", "hysteresis", "high-rate", "receive-overflow"):
@@ -73,7 +77,7 @@ def main():
             [".venv/bin/python", "tests/fault_scenarios.py", "--daemon", "build-resilience-debug/vigild", "--scenario", scenario,
              "--output", str(out / scenario)])
     for suite in ("test_queue", "test_outbox"):
-        run("Helgrind " + suite + ": zero unsuppressed races", ["valgrind", "--tool=helgrind", "--error-exitcode=99", "--fair-sched=yes", "build-resilience-debug/" + suite, *(["--handoff-only"] if suite == "test_outbox" else [])])
+        run("Helgrind " + suite + ": zero unsuppressed races", ["valgrind", "--tool=helgrind", "--error-exitcode=99", "--fair-sched=yes", "--suppressions=tests/helgrind.supp", "build-resilience-debug/" + suite, *(["--handoff-only"] if suite == "test_outbox" else [])])
     analyzer = ROOT / "build-resilience-analyze"
     if args.clean and analyzer.exists():
         shutil.rmtree(analyzer)
@@ -81,13 +85,14 @@ def main():
     run("GCC analyzer: zero unsuppressed findings", ["cmake", "--build", str(analyzer), "--parallel", "2"])
     run("original independent can-utils exchange", [".venv/bin/python", "tests/manual_commands.py", "--decoder", "build-resilience-debug/vigil-decode", "--output", str(out / "manual")])
     run("original decoder libFuzzer/ASan/UBSan 120-second budget", ["./scripts/fuzz", "120", str(out / "fuzz")])
+    run("hosted CI commands including v1/v2 PG contracts", ["./scripts/check-ci", "--clean"])
     for path in sorted((ROOT / "scripts").iterdir()):
         run("shell syntax " + path.name, ["bash", "-n", str(path)])
     run("diff whitespace", ["git", "diff", "--check"])
     assert report["source_sha256"] == source_digest(), "implementation changed during gate"
     report["completed_utc"] = datetime.now(timezone.utc).isoformat()
     (out / "gate.json").write_text(json.dumps(report, indent=2))
-    print(f"PASS Stage 1 clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
+    print(f"PASS Stage 2 clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
 
 
 if __name__ == "__main__":

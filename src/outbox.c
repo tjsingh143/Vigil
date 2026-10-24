@@ -545,30 +545,28 @@ static int validate(struct vigil_outbox *o)
                     "name='immutable_batch' AND sql LIKE '%BEFORE UPDATE ON outbox_batches%'",
                     1);
     if (rc == SQLITE_OK) rc = expect(o, "SELECT count(*) FROM spool_meta", 1);
-    /* Stage 1 has no retirement. Refuse to adopt a future/mutated retirement. */
+    /* Retired prefix and remaining rows jointly conserve admitted work. */
     if (rc == SQLITE_OK)
         rc = expect(
             o,
-            "SELECT count(*) FROM spool_meta WHERE last_retired_order=0 AND retired_records=0 AND "
-            "retired_readings=0 "
-            "AND pending_records=(SELECT coalesce(sum(record_count),0) FROM outbox_batches) "
+            "SELECT count(*) FROM spool_meta WHERE "
+            "pending_records=(SELECT coalesce(sum(record_count),0) FROM outbox_batches) "
             "AND pending_batches=(SELECT count(*) FROM outbox_batches) "
             "AND pending_payload_bytes=(SELECT coalesce(sum(payload_bytes),0) FROM outbox_batches) "
-            "AND admitted_readings=(SELECT coalesce(sum(reading_count),0) FROM outbox_batches) "
-            "AND next_order_id=pending_batches+1 AND next_run_no>(SELECT coalesce(max(run_no),0) "
+            "AND admitted_readings-retired_readings=(SELECT coalesce(sum(reading_count),0) FROM outbox_batches) "
+            "AND next_order_id=last_retired_order+pending_batches+1 AND next_run_no>(SELECT coalesce(max(run_no),0) "
             "FROM origin_runs)",
             1);
     if (rc == SQLITE_OK)
         rc = expect(
             o,
             "SELECT count(*) FROM origin_runs r WHERE next_seq!=admitted_records+1 OR "
-            "next_batch_id!=(SELECT count(*)+1 FROM outbox_batches b WHERE b.run_id=r.run_id) OR "
-            "admitted_records!=(SELECT coalesce(sum(record_count),0) FROM outbox_batches b WHERE "
+            "next_batch_id!=coalesce((SELECT min(batch_id)+count(*) FROM outbox_batches b WHERE b.run_id=r.run_id),next_batch_id) OR "
+            "admitted_records-retired_records!=(SELECT coalesce(sum(record_count),0) FROM outbox_batches b WHERE "
             "b.run_id=r.run_id) OR "
-            "admitted_readings!=(SELECT coalesce(sum(reading_count),0) FROM outbox_batches b WHERE "
+            "admitted_readings-retired_readings!=(SELECT coalesce(sum(reading_count),0) FROM outbox_batches b WHERE "
             "b.run_id=r.run_id) OR "
-            "retired_records!=0 OR retired_readings!=0 OR retired_revision!=0 OR "
-            "retired_reading_drops!=0 OR retired_event_drops!=0",
+            "retired_records>admitted_records OR retired_readings>admitted_readings",
             0);
     if (rc == SQLITE_OK) rc = expect(o, "SELECT count(*)<=4097 FROM origin_runs", 1);
     if (rc == SQLITE_OK) rc = load_usage(o);
@@ -593,7 +591,8 @@ static int validate(struct vigil_outbox *o)
                      "order_id,run_id,batch_id,coalesce(first_seq,0),record_count,reading_count,"
                      "payload,payload_bytes FROM outbox_batches ORDER BY order_id",
                      &s);
-    int64_t order = 1;
+    int64_t order = 0;
+    if (rc == SQLITE_OK) rc = scalar(o, "SELECT last_retired_order+1 FROM spool_meta", &order);
     while (rc == SQLITE_OK) {
         int step = sqlite3_step(s);
         if (step == SQLITE_DONE) break;
@@ -619,20 +618,21 @@ static int validate(struct vigil_outbox *o)
         rc = expect(o,
                     "SELECT count(*) FROM outbox_batches b WHERE batch_id!=(SELECT count(*) FROM "
                     "outbox_batches p WHERE p.run_id=b.run_id AND p.order_id<=b.order_id) "
-                    "OR (record_count>0 AND first_seq!=(SELECT coalesce(sum(record_count),0)+1 "
+                    "+(SELECT min(batch_id)-1 FROM outbox_batches p WHERE p.run_id=b.run_id) "
+                    "OR (record_count>0 AND first_seq!=(SELECT retired_records FROM origin_runs r WHERE r.run_id=b.run_id)+(SELECT coalesce(sum(record_count),0)+1 "
                     "FROM outbox_batches p WHERE p.run_id=b.run_id AND p.order_id<b.order_id))",
                     0);
     if (rc == SQLITE_OK)
         rc =
             expect(o,
-                   "SELECT count(*) FROM origin_runs r WHERE captured_reading_drops!=(SELECT "
+                   "SELECT count(*) FROM origin_runs r WHERE captured_reading_drops-retired_reading_drops!=(SELECT "
                    "coalesce(sum(json_extract(payload,'$.reading_drops')),0) FROM outbox_batches b "
                    "WHERE b.run_id=r.run_id) "
-                   "OR captured_event_drops!=(SELECT "
+                   "OR captured_event_drops-retired_event_drops!=(SELECT "
                    "coalesce(sum(json_extract(payload,'$.event_drops')),0) FROM outbox_batches b "
                    "WHERE b.run_id=r.run_id) "
                    "OR captured_revision!=coalesce((SELECT json_extract(payload,'$.revision') FROM "
-                   "outbox_batches b WHERE b.run_id=r.run_id ORDER BY batch_id DESC LIMIT 1),0)",
+                   "outbox_batches b WHERE b.run_id=r.run_id ORDER BY batch_id DESC LIMIT 1),retired_revision)",
                    0);
     sqlite3_progress_handler(o->db, 0, NULL, NULL);
     return rc;
@@ -813,7 +813,7 @@ enum vigil_store_result vigil_outbox_begin_run(struct vigil_outbox *o)
     }
     if (rc == SQLITE_OK)
         rc = exec_sql(o, "UPDATE spool_meta SET next_run_no=next_run_no+1 WHERE id=1;DELETE FROM "
-                         "origin_runs WHERE admitted_records=0 AND next_batch_id=1 AND "
+                         "origin_runs WHERE NOT EXISTS(SELECT 1 FROM outbox_batches b WHERE b.run_id=origin_runs.run_id) AND "
                          "run_no<(SELECT max(run_no) FROM origin_runs)");
     if (rc == SQLITE_OK) rc = seal(o);
     if (rc != SQLITE_OK) return result(o, rollback(o, rc));
@@ -909,7 +909,7 @@ static bool make_payload(struct vigil_outbox *o, const struct vigil_capture *c)
     if (now > (uint64_t)ID_MAX || utc > (uint64_t)UTC_MAX) return false;
     uint64_t rd = c->stats.readings_dropped - o->captured_readings,
              ed = c->stats.events_dropped - o->captured_events;
-    bool snapshot = o->next_batch == 1 || rd != 0 || ed != 0 || c->revision != o->revision;
+    bool snapshot = c->recovery || o->next_batch == 1 || rd != 0 || ed != 0 || c->revision != o->revision;
     o->used = 0;
     o->json_ok = true;
     json_add(o,
@@ -926,17 +926,22 @@ static bool make_payload(struct vigil_outbox *o, const struct vigil_capture *c)
              "},\"health\":{\"readings_queued\":%" PRIu64 ",\"events_queued\":%" PRIu64
              ",\"readings_dropped\":%" PRIu64 ",\"events_dropped\":%" PRIu64
              ",\"first_drop_ms\":%" PRIu64 ",\"last_drop_ms\":%" PRIu64 ",\"revision\":%" PRIu64
-             ",\"outage_started_ms\":0,\"outage_ms\":0,\"outage_total_ms\":0,\"outage_ended_ms\":0,"
-             "\"connection_failures\":0,\"query_failures\":0,\"reconnects\":0},\"records\":[",
+             ",\"outage_started_ms\":%" PRIu64 ",\"outage_ms\":%" PRIu64 ",\"outage_total_ms\":%" PRIu64
+             ",\"outage_ended_ms\":%" PRIu64 ",\"connection_failures\":%" PRIu64 ",\"query_failures\":%" PRIu64
+             ",\"reconnects\":%" PRIu64 "},\"records\":[",
              o->next_order, o->run, o->next_batch, o->started, o->utc, now, utc, o->spool, o->run,
              o->run_no, o->token, o->boot, o->started, o->utc, c->ticket, c->revision,
              rd != 0 || ed != 0   ? "gap"
-             : o->next_batch == 1 ? "recovery"
+             : (o->next_batch == 1 || c->recovery) ? "recovery"
                                   : "flush",
              rd, ed, c->stats.readings_evicted, c->stats.events_evicted, c->stats.readings_rejected,
              c->stats.events_rejected, c->stats.readings_queued, c->stats.events_queued,
              c->stats.readings_dropped, c->stats.events_dropped, c->stats.first_drop_ms,
-             c->stats.last_drop_ms, c->revision);
+             c->stats.last_drop_ms, c->revision,
+             c->stats.outage_started_ms!=0?c->stats.outage_started_ms:c->stats.last_outage_started_ms,
+             c->stats.outage_started_ms!=0?now-c->stats.outage_started_ms:c->stats.last_outage_ms,
+             c->stats.outage_total_ms,c->stats.outage_started_ms!=0?0:c->stats.last_outage_ended_ms,
+             c->stats.connection_failures,c->stats.query_failures,c->stats.reconnects);
     uint64_t readings = 0;
     for (size_t i = 0; i < c->count; ++i) {
         record_json(o, &c->records[i], (uint64_t)o->next_seq + i, i != 0);
@@ -1013,6 +1018,7 @@ static int recover(struct vigil_outbox *o, bool *found)
     if (rc == SQLITE_OK && sqlite3_changes(o->db) != 1) rc = SQLITE_FULL;
     if (rc == SQLITE_OK) rc = seal(o);
     if (rc == SQLITE_OK) o->uncertain = false;
+    if (rc != SQLITE_OK && o->db != NULL) rc = rollback(o,rc);
     o->recovering = false;
     return rc;
 }
@@ -1039,6 +1045,9 @@ enum vigil_store_result vigil_outbox_append(struct vigil_outbox *o, const struct
         if (!make_payload(o, c)) return VIGIL_STORE_INVALID;
         o->pending = true;
     }
+    if (o->usage.admitted > (uint64_t)ID_MAX-o->candidate.records ||
+        o->usage.readings > (uint64_t)ID_MAX-o->candidate.readings)
+        return VIGIL_STORE_EXHAUSTED;
     if (o->usage.records > vigil_test_limit("VIGIL_TEST_RECORD_LIMIT", VIGIL_OUTBOX_RECORDS) ||
         o->candidate.records >
             vigil_test_limit("VIGIL_TEST_RECORD_LIMIT", VIGIL_OUTBOX_RECORDS) - o->usage.records ||
@@ -1142,6 +1151,147 @@ enum vigil_store_result vigil_outbox_append(struct vigil_outbox *o, const struct
     *committed = o->candidate;
     o->pending = false;
     return result(o, SQLITE_OK);
+}
+enum vigil_store_result vigil_outbox_peek(struct vigil_outbox *o, struct vigil_replay_batch *b)
+{
+    owner(o);
+    b->bytes = 0;
+    if (o->uncertain) return VIGIL_STORE_IO_UNKNOWN;
+    sqlite3_stmt *s = NULL;
+    int rc = prepare(o,
+        "SELECT order_id,run_id,batch_id,coalesce(first_seq,0),record_count,reading_count,payload,"
+        "json_extract(payload,'$.revision'),json_extract(payload,'$.health.readings_dropped'),"
+        "json_extract(payload,'$.health.events_dropped'),json_extract(payload,'$.kind')='gap',"
+        "json_type(payload,'$.alarms')='array' FROM outbox_batches ORDER BY order_id LIMIT 1", &s);
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_ROW) {
+            int bytes = sqlite3_column_bytes(s, 6);
+            const char *run = (const char *)sqlite3_column_text(s, 1);
+            const char *payload = (const char *)sqlite3_column_text(s, 6);
+            if (bytes < 1 || bytes > (int)VIGIL_PAYLOAD_MAX || run == NULL || !uuid(run) || payload == NULL)
+                rc = SQLITE_CORRUPT;
+            else {
+                b->id = (struct vigil_local_commit){
+                    .order_id=(uint64_t)sqlite3_column_int64(s,0),
+                    .batch_id=(uint64_t)sqlite3_column_int64(s,2),
+                    .first_seq=(uint64_t)sqlite3_column_int64(s,3),
+                    .records=(uint64_t)sqlite3_column_int64(s,4),
+                    .readings=(uint64_t)sqlite3_column_int64(s,5)};
+                memcpy(b->run_id, run, 37);
+                memcpy(b->payload, payload, (size_t)bytes);
+                b->payload[bytes] = '\0';
+                b->bytes = (size_t)bytes;
+                b->revision = (uint64_t)sqlite3_column_int64(s,7);
+                b->reading_drops = (uint64_t)sqlite3_column_int64(s,8);
+                b->event_drops = (uint64_t)sqlite3_column_int64(s,9);
+                b->gap = sqlite3_column_int(s,10) != 0;
+                b->snapshot = sqlite3_column_int(s,11) != 0;
+                rc = SQLITE_OK;
+            }
+        } else if (rc == SQLITE_DONE) rc = SQLITE_OK;
+    }
+    rc = finish(s, rc);
+    if ((rc & 255) == SQLITE_IOERR) o->uncertain = true;
+    return result(o, rc);
+}
+/* Called only with a validated successful PG result. The durable head remains
+ * authoritative; never accept a result naming a later batch or changed bytes. */
+enum vigil_store_result vigil_outbox_retire(struct vigil_outbox *o, const struct vigil_replay_batch *b)
+{
+    owner(o);
+    int rc = SQLITE_OK;
+    if (o->uncertain) {
+        bool found = false;
+        rc = recover(o, &found);
+        if (rc != SQLITE_OK) return result(o, rc);
+        if (o->pending && found) {
+            o->uncertain = true; /* append must publish its recovered candidate */
+            return VIGIL_STORE_BUSY;
+        }
+    }
+    int64_t prefix = 0;
+    rc = scalar(o, "SELECT last_retired_order FROM spool_meta", &prefix);
+    if (rc == SQLITE_OK && (uint64_t)prefix == b->id.order_id)
+        return result(o, SQLITE_OK); /* sealed uncertain retirement, same pinned result */
+    if (rc == SQLITE_OK && ((uint64_t)prefix + 1U != b->id.order_id || b->bytes == 0 ||
+                           b->bytes > VIGIL_PAYLOAD_MAX)) rc = SQLITE_CORRUPT;
+    if (rc == SQLITE_OK) rc = mutation_ready(o);
+    vigil_test_hook("before_retire_begin");
+    if (rc == SQLITE_OK) rc = exec_sql(o, "BEGIN IMMEDIATE");
+    sqlite3_stmt *s = NULL;
+    if (rc == SQLITE_OK) rc = prepare(o,
+        "DELETE FROM outbox_batches WHERE order_id=?1 AND run_id=?2 AND batch_id=?3 "
+        "AND record_count=?4 AND reading_count=?5 AND payload=?6", &s);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,1,(int64_t)b->id.order_id);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_text(s,2,b->run_id,-1,SQLITE_STATIC);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,3,(int64_t)b->id.batch_id);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,4,(int64_t)b->id.records);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,5,(int64_t)b->id.readings);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_text(s,6,b->payload,(int)b->bytes,SQLITE_STATIC);
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_DONE) rc = sqlite3_changes(o->db) == 1 ? SQLITE_OK : SQLITE_CORRUPT;
+    }
+    rc = finish(s,rc);
+    s = NULL;
+    if (rc == SQLITE_OK) rc = prepare(o,
+        "UPDATE origin_runs SET retired_records=retired_records+?1,retired_readings=retired_readings+?2,"
+        "retired_reading_drops=?3,retired_event_drops=?4,retired_revision=?5 WHERE run_id=?6", &s);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,1,(int64_t)b->id.records);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,2,(int64_t)b->id.readings);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,3,(int64_t)b->reading_drops);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,4,(int64_t)b->event_drops);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,5,(int64_t)b->revision);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_text(s,6,b->run_id,-1,SQLITE_STATIC);
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_DONE) rc = sqlite3_changes(o->db) == 1 ? SQLITE_OK : SQLITE_CORRUPT;
+    }
+    rc = finish(s,rc);
+    s = NULL;
+    if (rc == SQLITE_OK) rc = prepare(o,
+        "UPDATE spool_meta SET last_retired_order=?1,pending_records=pending_records-?2,"
+        "pending_batches=pending_batches-1,pending_payload_bytes=pending_payload_bytes-?3,"
+        "retired_records=retired_records+?2,retired_readings=retired_readings+?4 WHERE id=1", &s);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,1,(int64_t)b->id.order_id);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,2,(int64_t)b->id.records);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,3,(int64_t)b->bytes);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s,4,(int64_t)b->id.readings);
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_DONE) rc = sqlite3_changes(o->db) == 1 ? SQLITE_OK : SQLITE_CORRUPT;
+    }
+    rc = finish(s,rc);
+    s = NULL;
+    if (rc == SQLITE_OK) rc = prepare(o,
+        "DELETE FROM origin_runs WHERE run_id!=?1 AND NOT EXISTS "
+        "(SELECT 1 FROM outbox_batches b WHERE b.run_id=origin_runs.run_id)", &s);
+    if (rc == SQLITE_OK) rc = sqlite3_bind_text(s,1,o->run,-1,SQLITE_STATIC);
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_DONE) rc = SQLITE_OK;
+    }
+    rc = finish(s,rc);
+    if (rc == SQLITE_OK) {
+        vigil_test_hook("after_retire_delete_before_commit");
+        if (vigil_test_fault("retire_rollback")) rc = SQLITE_FULL;
+        else {
+            rc = seal(o);
+            /* Any failed retirement COMMIT/sync needs a sealing recovery
+             * barrier before absence+prefix can acknowledge the result. */
+            if (rc != SQLITE_OK) o->uncertain = true;
+        }
+        if (rc == SQLITE_OK && vigil_test_fault("retire_commit_unknown")) rc = SQLITE_IOERR;
+    }
+    if (rc != SQLITE_OK) rc = rollback(o,rc);
+    if (rc == SQLITE_OK) {
+        vigil_test_hook("after_retire_commit_before_publish");
+        rc = load_usage(o);
+    }
+    if ((rc & 255) == SQLITE_IOERR || (rc & 255) == SQLITE_CANTOPEN || (rc & 255) == SQLITE_PROTOCOL)
+        o->uncertain = true;
+    return result(o,rc);
 }
 enum vigil_store_result vigil_outbox_checkpoint(struct vigil_outbox *o, bool truncate)
 {

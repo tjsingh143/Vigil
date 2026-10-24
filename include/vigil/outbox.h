@@ -22,12 +22,21 @@ struct vigil_capture {
     size_t count, alarm_count;
     struct vigil_queue_stats stats;
     uint64_t revision, ticket;
+    bool recovery;
 };
 struct vigil_outbox_usage {
     uint64_t records, batches, bytes, admitted, readings, retired;
 };
 struct vigil_local_commit {
     uint64_t order_id, batch_id, first_seq, records, readings;
+};
+struct vigil_replay_batch {
+    struct vigil_local_commit id;
+    char run_id[37];
+    size_t bytes;
+    uint64_t revision, reading_drops, event_drops;
+    bool gap, snapshot;
+    char payload[VIGIL_PAYLOAD_MAX + 1U];
 };
 struct vigil_outbox;
 /* Single-thread owner API. Paths must be explicitly provisioned on ext4/XFS.
@@ -38,6 +47,9 @@ enum vigil_store_result vigil_outbox_open(struct vigil_outbox **out, const char 
 enum vigil_store_result vigil_outbox_begin_run(struct vigil_outbox *o);
 enum vigil_store_result vigil_outbox_append(struct vigil_outbox *o, const struct vigil_capture *c,
                                             struct vigil_local_commit *committed);
+/* Empty head is OK with bytes=0; statements end before returning. */
+enum vigil_store_result vigil_outbox_peek(struct vigil_outbox *o, struct vigil_replay_batch *b);
+enum vigil_store_result vigil_outbox_retire(struct vigil_outbox *o, const struct vigil_replay_batch *b);
 enum vigil_store_result vigil_outbox_checkpoint(struct vigil_outbox *o, bool truncate);
 enum vigil_store_result vigil_outbox_close(struct vigil_outbox *o);
 void vigil_outbox_usage(const struct vigil_outbox *o, struct vigil_outbox_usage *usage);
