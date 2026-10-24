@@ -1,5 +1,11 @@
 # Resilience Stage 3 fault tests
 
+Stage 4 reuses this entire fault gate and adds the production demo and matched
+benchmarks; current commands/results and handoff are in
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md) and
+[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Stage 3 stopping statements below
+record that earlier authorization, now superseded by the owner’s Stage 4 request.
+
 **Stage 3 PASS for the software failure contract.** All 21 scenario categories
 passed the final clean Linux gate; no mandatory command was skipped. Stage 4,
 deployment and publication are outside this checkpoint.

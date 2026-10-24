@@ -7,7 +7,7 @@ non-advancing publishers and implausible measurements, keeps live alarms in
 memory, and admits history to a bounded SQLite durable outbox without storage
 I/O in its CAN monitoring thread.
 
-**Resilience Stage 2: durable PostgreSQL replay and reconciliation.** SQLite
+**Vigil Resilience: local release candidate for independent review.** SQLite
 freezes each batch before submission. A separate libpq worker replays the oldest
 durable batch, verifies its origin and exact receipt bytes, then the SQLite owner
 retires it transactionally. Lost responses remain unknown and retry unchanged.
@@ -15,6 +15,10 @@ The [outbox contract](docs/OUTBOX.md) describes operation;
 [resilience state](docs/RESILIENCE_STATE.md) records actual evidence and the stop
 boundary. Deployment requires the additive migration 002 and runtime grants;
 001 remains unchanged. Monitoring owns live alarms throughout replay.
+[Release/setup/rollback handoff](docs/RESILIENCE_RELEASE.md),
+[measured comparison](docs/RESILIENCE_PERFORMANCE.md), and
+[current interview guide](docs/INTERVIEW_GUIDE.md) describe this candidate.
+It has not been independently verified.
 
 ```text
 Python pods → real Linux SocketCAN/vcan → main CAN/timerfd/signalfd poll loop
@@ -43,7 +47,7 @@ use the repository's Ubuntu ARM64 Lima VM:
 ```sh
 brew install lima
 ./scripts/dev up
-./scripts/dev ./scripts/verify --clean --output artifacts/my-stage2-gate
+./scripts/dev ./scripts/verify --clean --output artifacts/my-rc-gate
 ```
 
 Setup provisions build/test dependencies and an isolated, source-verified
@@ -119,24 +123,43 @@ developer's actual SQLite or PG data. Sudo is needed for network/mount/unit
 setup; the daemon remains unprivileged.
 
 ```sh
-./scripts/check-resilience --clean --output artifacts/my-stage2-gate
+./scripts/check-resilience --clean --output artifacts/my-rc-gate
 ./scripts/check-ci --clean      # hosted subset: no vcan/systemd dependency
 ./scripts/check-release --clean # optimized units + vcan/monitor/local recovery
 .venv/bin/python tests/database_contract.py # original PG v1 schema, unchanged
 ```
 
-The Stage 2 gate includes strict GCC/Clang builds, 65 C cases per build, seven
-Python cases, genuine vcan monitoring, deterministic SIGKILL cuts, byte/identity
+The complete candidate gate includes strict GCC/Clang builds, C/Python tests,
+genuine vcan monitoring, deterministic SIGKILL cuts, byte/identity
 comparisons against recovered DB/WAL, capacity/accounting/capture races, real
 ENOSPC/read-only storage, hardened supervision, sanitizers, Helgrind, GCC analyzer,
 manual can-utils exchange, finite receive-load accounting and decoder fuzzing.
 Expectations precede execution. gate.json records exact commands, exits and
 implementation digest; logs and native DB/WAL inventories retain raw evidence.
-Production binaries exclude the test fault dispatcher and VFS.
+Production binaries exclude the test fault dispatcher and VFS. The gate also
+runs the asserted production-binary demo and three alternating original/Resilience
+benchmark trials with explicit warm-up and measurement boundaries.
+
+```sh
+cmake -S . -B build-resilience-release -DCMAKE_BUILD_TYPE=Release -DVIGIL_BENCHMARKS=ON
+cmake --build build-resilience-release --parallel 2
+./scripts/demo --build build-resilience-release
+./scripts/benchmark --build build-resilience-release --runs 3 --seconds 60 \
+  --output artifacts/my-comparison
+```
+
+The demo shows healthy pods, durable local admission, stopped disposable PG,
+SIGKILL/restart before PG recovery, original records retained, safe old-run replay,
+ambiguous-commit duplicate suppression, current alarms and exact final counters.
+Resources are disposable and cleaned up; raw evidence remains under `artifacts/`.
+The benchmark builds pinned original `d179681a40497ada533d2f61e50b5ac60a6ca293`
+in a temporary detached worktree and alternates matched Linux trials. It reports
+variability and explicit limits; it does not establish universal throughput.
+See the release handoff for native-filesystem build-copy instructions.
 
 The [original 1.0 release audit](docs/FINAL_VERIFICATION.md),
 [original measured report](docs/VERIFICATION.md),
-[interview demo](docs/INTERVIEW_GUIDE.md) and legacy PG scenarios remain historical
+legacy interview fixture (`tests/interview_demo.py`) and PG scenarios remain historical
 records for the pre-outbox implementation. Their PG backfill/volatile-crash-loss
 expectations do not describe the durable-outbox daemon. The hosted badge covers the published
 1.0 revision until this local checkpoint is explicitly published; no new hosted

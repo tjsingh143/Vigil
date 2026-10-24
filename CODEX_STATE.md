@@ -1,3 +1,50 @@
+# Current work — Resilience Stage 4 RELEASE CANDIDATE
+
+**Complete for independent-review handoff; not independently verified. STOP.**
+One Codex agent; no delegation. Started clean main 51582d1. Owner authorized
+benchmarks, full gates, demo/docs and local commits; no deployment, production
+change, push, history rewrite or publication. Full v3 brief, required records,
+source/tests and original-baseline diff reviewed; initial Release gate passed.
+
+Candidate identity: the local implementation commit carrying SHA-256
+`88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`; literal commit ID is recorded in the following local
+documentation receipt. Exact results/handoff: [docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md).
+Full clean native Linux gate **68/68 zero exits**, 2026-10-24T17:28:50.960947+00:00 through
+2026-10-24T17:55:45.543621+00:00; source unchanged. Raw: artifacts/resilience-stage4/final3/.
+GCC/Clang, Debug/Release, ASan/UBSan/TSan, SQL v1/v2, all existing local/remote
+cuts, 72 seed executions, actual ext4/systemd, Helgrind/analyzer, CAN/manual,
+95,304,612 decoder fuzz inputs/121 s, local CI commands, production demo and
+three matched benchmark trials per binary passed. No hosted candidate run claim.
+
+Demo: 20/20 readings, 43 history rows/28 exact receipts, duplicate suppression,
+zero final pending/gap losses/volatile abandonment; arbitrary unsaved event loss
+remains unknowable. Large case: 6128 exact readings, 0.446 s restart, 4.481 s drain.
+Benchmark medians: local 99.99/s; remote original100.00/Resilience82.50 readings/s;
+600-reading drain0.84/11.13s; CPU1.42/10.53% one core; RSS7.77/11.28MiB.
+Remote could not keep pace at this offered natural batch shape; no universal
+throughput or per-record daemon latency claim. API/core probes have narrower
+boundaries documented in docs/RESILIENCE_PERFORMANCE.md.
+
+New probes/demo/benchmark and optional CMake targets; existing tests preserved.
+Production C/protocol/SQL/service unchanged. Cleanup hardened for transcript-save
+errors. Interrupted attempts and the final2 administrative export timeout amid
+clock discontinuities are retained separately; unchanged-budget focused and
+complete final3 gates passed, without relaxed assertions/deadlines.
+
+Native archive: 10,588,436 bytes, SHA-256
+8703ef6773bf29c45e1739313694f24f81f5917dfcd51ca36800905b54f585eb.
+No test process/mount/unit or detached baseline worktree remains; default service inactive, installed
+PG online, ASLR2; process-scoped sleep inhibition ended. Diff/links/secrets/build
+artifact review precedes local commits. See release docs for exact setup,
+rollback, power/storage assumptions, fault reproduction and remaining evidence
+gaps. Power cuts, XFS, physical CAN, failover, full maxima, forced entropy/UUID/OOM
+injection, heap/lock/asynchronous per-record timing remain unqualified.
+**STOP after local release-candidate/handoff commits. No independent-verification declaration.**
+
+---
+
+# Historical Stage 3 checkpoint
+
 # Current work — Resilience Stage 3 COMPLETE
 
 **Stage 3 PASS. STOP; do not start Stage 4.** One agent; no delegation.

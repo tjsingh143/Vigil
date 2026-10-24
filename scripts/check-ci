@@ -15,7 +15,7 @@ ctest --test-dir build-ci -V
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 .venv/bin/python -c 'import sys; sys.path.insert(0,"tests"); from integration import cli_proof; cli_proof("build-ci/vigil-decode")'
 .venv/bin/python tests/database_contract.py
-.venv/bin/python tests/resilience_database_contract.py
+.venv/bin/python tests/resilience_database_contract.py --output "artifacts/ci-sql-v2-$(date -u +%Y%m%dT%H%M%SZ)"
 cmake -S . -B build-ci-sanitize -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DVIGIL_SANITIZERS=ON
 cmake --build build-ci-sanitize --parallel 2
 export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1

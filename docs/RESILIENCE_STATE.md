@@ -1,3 +1,149 @@
+# Vigil Resilience — Stage 4 RELEASE CANDIDATE
+
+**Prepared for independent review. Not independently verified. Stop here.**
+One Codex agent; no delegation. Started clean main at `51582d1`. The owner
+explicitly authorized Stage 4 benchmarking/release work and local commits,
+superseding historical stops below. No production-data/service change,
+deployment, push, remote release, history rewrite or publication occurred.
+
+Release-candidate revision: the local commit carrying the tested digest below;
+a following documentation receipt records its literal commit ID after creation.
+Tested parent: `51582d13d28c58221bdce9fe18447d94ba501c3f`. Implementation SHA-256:
+`88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`.
+Docs/state/README are excluded from this digest; source/binary metadata in the
+gate and benchmark identifies the precommit tree exactly.
+
+## Completed release work
+
+- Reviewed the full v3 PDF, instructions, resilience state/contracts, actual
+  source/tests, branch and changes against pinned original
+  `d179681a40497ada533d2f61e50b5ac60a6ca293`. Fresh initial clean Release
+  regression passed before changes (`initial-regression.log`).
+- Added optional standalone strict C probes, matched sequential benchmarks and
+  a production-daemon interview demo. Production C, protocol/vectors, SQL/schema
+  and service behavior are unchanged in this stage. No performance settings were
+  relaxed to improve numbers.
+- Preserved existing CMake/CI gates; retained disposable v2 SQL JSON in CI
+  artifacts. Outbox units and disposable PG contracts run in the hosted subset;
+  actual vcan/systemd/ext4 fault gates remain mandatory Linux-local tests.
+  No hosted run is claimed for this candidate.
+- Updated README, architecture/event-state references, exact setup, storage and
+  power assumptions, upgrade/rollback, fault reproduction, measured comparison,
+  interview guide, resume evidence and learning/decision records.
+
+## Exact complete clean verification
+
+```sh
+caffeinate -i ./scripts/dev bash -c 'cd /tmp/vigil-stage4-final-source && ./scripts/check-resilience --clean --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage4/final3'
+```
+
+**68/68 commands exited zero**, no mandatory command skipped.
+UTC: `2026-10-24T17:28:50.960947+00:00` through
+`2026-10-24T17:55:45.543621+00:00`; summed monotonic command durations
+**1618.218 s**.
+`gate.json` stores every exact argv, expectation, exit, duration and log.
+The source-unchanged assertion passed; native and workspace digests match.
+
+Environment: Ubuntu 24.04 ARM64 Lima, Linux 6.8.0-142-generic, 2 vCPUs/2 GiB,
+native ext4; GCC 13.3.0, Clang 18.1.3, CMake 3.28.3, SQLite 3.51.3,
+PostgreSQL/libpq 16.15, systemd 255, Python 3.12.3. TSan's subprocess-only
+`setarch -R` left global ASLR at 2. Dependency source/version and setup are in
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md).
+
+| Verification area | Observed outcome |
+| --- | --- |
+| Strict builds/units | Debug/Release GCC, Clang ASan+UBSan and GCC TSan passed; measurement probes compiled in all four; both CI unit builds passed; original baseline unit gate passed separately |
+| Regression/PG | Python, decoder/monitor, original v1 and new v2 actual PG transaction/permission/concurrency contracts passed; no sanitizer/analyzer/Helgrind finding observed |
+| Local crash boundaries | 130 admission/origin kills across four builds; exact recovered identities/payloads/allocators, faults, capture and capacity assertions passed |
+| Remote boundaries | 48 confirmation/retirement cuts + 26 lost-response kills; byte-identical retry/equality, rollback, FIFO, poison, current/old-run accounting and shutdown assertions passed |
+| Composed schedules | Seeds 0–59 Debug plus 0/7/47/48 each Release/ASan/TSan: 72 executions, 156 selected schedule kills, zero failures; Debug server-kill/damaged-copy/backlog extras passed; 75 final case groups |
+| Large durable backlog | 6000 readings in 189 batches +128 new during replay; exact 6128 remote readings, zero pending/drops; restart 0.446 s, drain 4.481 s, alarm age 501 ms at 500-ms deadline |
+| Physical local storage | Real ext4 SQLITE_FULL=13, no failed-call durability, stop 1.009 s; actual read-only startup exit 2/no READY, five records preserved |
+| Supervision | Temporary hardened UID501 unit: readiness, SIGKILL and watchdog restart, nine committed records retained |
+| Additional gates | Natural/forced-overflow finite CAN conservation, can-utils manual exchange, scoped Helgrind, GCC analyzer, all shell syntax and diff whitespace passed |
+| Decoder fuzz | 95,304,612 inputs, 121 reported seconds, peak RSS 296 MiB; no crash/sanitizer/invariant finding; separate CI fuzz smoke passed |
+| Production demo | 20/20 readings remote; 43 total history records and 28 receipts; at least two byte-identical ambiguous submissions; final pending records/batches/bytes=0, known reading/event gap losses=0, final volatile abandonment=0 |
+| Matched benchmark | Three alternating runs per production binary, 2s excluded warmup +60s measured 100 readings/s and 10 heartbeat/s, then 600-reading outage/drain; all paced readings reconcile; six finite bursts account exact kernel losses; all API probes passed |
+
+The 1/2/4/8/16/30/30-second retry schedule was observed as
+1.016/2.019/4.030/8.032/16.071/30.047/30.043 s; permission retry 30.050 s.
+These are finite observations, not universal delivery deadlines.
+
+## Measured comparison and evidence
+
+[RESILIENCE_PERFORMANCE.md](RESILIENCE_PERFORMANCE.md) provides every trial,
+median/range, p50/p95/p99 API distributions, calibration, file lengths,
+checkpoint costs, CPU/RSS and exact measurement boundaries. Key medians:
+original remote window **100.00 readings/s**, Resilience **82.50 readings/s**;
+Resilience local admission **99.99 readings/s**. The natural batch shape did not
+sustain 100/s remote delivery; input cessation was needed to drain the backlog.
+Original/Resilience 600-reading drain **0.84/11.13 s**, CPU **1.42/10.53% of one
+core**, sampled peak RSS **7.77/11.28 MiB**. These costs are retained, not hidden.
+Original has no comparable local durable admission boundary.
+
+Single-owner synthetic enqueue-to-durable-return p50/p95/p99 was
+**0.878/1.146/1.596 ms** (one record) and **1.280/1.605/2.246 ms** (32 records),
+600 measured batches per size. These exclude asynchronous daemon scheduling;
+no daemon enqueue-to-commit percentile is claimed. Pure-core nanosecond values
+are close to clock overhead and do not establish an algorithmic speed change.
+
+Primary evidence: `artifacts/resilience-stage4/final3/`, with `benchmark/`,
+`demo/`, `cleanup.txt`, per-command logs and copied CI-native artifacts.
+Thirteen native DB/WAL evidence roots are listed in `native-evidence-paths.json`;
+portable archive `native-inventories.tar.gz`: **10,588,436 bytes**, SHA-256
+`8703ef6773bf29c45e1739313694f24f81f5917dfcd51ca36800905b54f585eb`.
+The tested native source/build directory remains `/tmp/vigil-stage4-final-source`.
+Raw generated evidence/builds are ignored and are not committed.
+
+## Retained failures, defects and qualification gaps
+
+No confirmed production implementation regression remains unresolved in the
+covered scope. Review hardened new demo/benchmark teardown so transcript-save
+failure cannot bypass PG cleanup. `final/` was intentionally interrupted for
+that correction; an earlier benchmark launch was interrupted to keep vcan work
+sequential. Pilot results are separate from final acceptance.
+
+`final2/` passed all 60 Debug schedules and server/damage extras, then its final
+administrative PG snapshot export hit the unchanged 15-second statement timeout.
+UTC/monotonic duration divergences were large in that attempt; the exact cause
+is unproven. It is not a passed gate. An unchanged-budget focused rerun passed
+all 6128 readings, then final3 passed the entire gate. The process-scoped idle
+sleep inhibitor changed no persistent setting; no oracle or daemon/export
+budget was relaxed. `attempts.json` records all attempt classifications.
+Accepted benchmark UTC/monotonic scenario-duration differences were <=0.532 s;
+all performance calculations use Linux monotonic clocks.
+
+Remaining limits: queued/held inputs and unsaved crash counters are volatile;
+zero saved event gaps cannot certify zero arbitrary crash-time event loss.
+Honest local/remote flush/storage and untampered history/receipts are required.
+No power-cut/media survival, actual outage reboot, XFS, physical CAN, failover,
+simultaneous maximum-resource fill, forced entropy/UUID-collision/general OOM
+injection, SQLite heap instrumentation or queue-lock/per-record asynchronous
+latency qualification. The broader design matrix is not claimed fully measured.
+No hard real-time, unconditional delivery, universal throughput, exactly-once
+transmission or automatic retention claim. CRC/counters do not authenticate;
+flat values are suspicion; diagnostic lines can drop and local file I/O can stall.
+
+## Independent-review handoff and stop
+
+Reproduce from a fresh native Linux checkout using
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md); use a fresh output directory and
+an otherwise idle vcan. Review the exact candidate/digest, failure contracts,
+full local/remote payload union, retry/retirement/old-run cursors, ownership,
+capacity behavior and the benchmark's distinct measurement boundaries.
+Independent reviewers should prioritize the explicit qualification gaps and the
+remote service-rate cost before any deployment decision.
+
+Cleanup check found no test daemon/cluster, loop mount, transient unit or original
+benchmark worktree; default vigild is inactive, PG 16/main remains online and
+ASLR remains 2. No persistent sleep inhibitor remains. **Stage 4 local release
+candidate complete; STOP. Do not deploy, publish, or declare it independently
+verified.** Historical records follow.
+
+---
+
+# Historical Stage 3 checkpoint
+
 # Vigil Resilience state — Stage 3 COMPLETE
 
 **Stage 3 PASS for the software failure contract. Stop; do not start Stage 4.**

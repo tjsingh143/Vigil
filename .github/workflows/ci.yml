@@ -38,4 +38,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 # Real SocketCAN/vcan and systemd supervision are mandatory Linux-local gates:
-# ./scripts/verify --clean . Never substitute a virtual Python bus in this job.
+# ./scripts/check-resilience --clean --output artifacts/local-rc
+# The hosted subset includes unprivileged outbox units on native local storage
+# and disposable PostgreSQL v1/v2 contracts; no vcan, mount or systemd fixture.
+# Never substitute a virtual Python bus for the mandatory Linux-local gates.

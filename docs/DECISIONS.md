@@ -499,3 +499,60 @@ small-query statement timeout. Its administrative statement now gets 15 seconds,
 inside the existing 20-second subprocess bound; daemon SQL/deadlines and all
 content assertions are unchanged. Export errors retain server stderr. Failed
 attempts and the successful focused rerun remain separate from final acceptance.
+
+## Resilience Stage 4 — measured release candidate
+
+The owner authorized the release/performance checkpoint, full regression/fault
+and benchmark gates, a production-binary demonstration, concise documentation
+and local commits. This supersedes the historical Stage 3 stop. One agent only;
+no delegation, production-data/service modification, deployment, push or remote
+release. Initial main was clean at 51582d1. The full v3 brief, state/contracts,
+source/tests and diff against original d179681 were reviewed. Fresh initial
+Release regressions passed before implementation changes.
+
+Use the recorded original baseline commit in a newly allocated detached native
+Linux worktree, without moving branches. Alternate original/Resilience trial
+order, with identical compiler/environment/configuration and simulated workload,
+an excluded warmup and multiple measured runs. Separate core-call probes,
+production-daemon paced/recovery observations and single-owner outbox API timing;
+no conversion of a microbenchmark into a universal service-rate claim. Linker
+wrapping measures actual BEGIN-to-COMMIT returns in a standalone probe; directory
+sync is included in the wider append API timing. Production algorithms, schema,
+protocol and service behavior are unchanged in this stage.
+
+The old volatile-writer interview fixture stays available for the pinned original
+binary. `scripts/demo` now selects a production Resilience story using disposable
+native SQLite/PG, crash/restart, old-run replay, observed server commit with lost
+response, identical retransmission, live alarms and exact final inventories.
+A brief clean stop after restart permits supported offline byte verification.
+New measurement/demo resources clean up on errors, SIGINT and SIGTERM; killing
+the harness itself with SIGKILL cannot execute cleanup. A preliminary benchmark
+launch was deliberately interrupted before accepting numbers to keep vcan work
+sequential; its incomplete evidence remains separate.
+
+Existing hosted CI already ran safe unprivileged outbox units and disposable
+v1/v2 SQL contracts. Preserve those gates and retain the v2 contract JSON as an
+artifact. Full vcan/systemd/physical-filesystem faults remain explicit Linux-local
+requirements. The full verifier now adds optional strict measurement probes,
+the new demo and three >=60-second measured trials per binary. No hosted run or
+independent-review result is inferred from local success. Current outcomes,
+limitations and candidate identity are maintained in RESILIENCE_STATE.md.
+
+Stage 4 review tightened the new harness cleanup so transcript-write failures
+cannot bypass PG teardown. The first clean attempt was intentionally interrupted
+before acceptance for that correction. A subsequent clean attempt passed all 60
+Debug schedules plus server-kill/damaged-copy cases, then failed the administrative
+backlog PG export at the unchanged 15-second statement timeout. That attempt's
+UTC elapsed times contain large jumps relative to its monotonic durations; the
+precise cause of the cancellation is unproven. The unchanged-budget focused
+server/damage/6128-reading case passed. The next complete clean run uses a
+process-scoped macOS idle-sleep inhibitor, with no persistent power setting or
+integrity/deadline relaxation. Raw attempts remain separately classified.
+
+The final complete clean attempt passed all 68 commands and the unchanged-source
+check. The final measured table retains all three trials and the slower/higher
+resource-cost Resilience results; it does not rebrand API/core probes as daemon
+capacity. Independent verification, actual power/hardware work and the explicit
+remaining design-matrix injections are unclaimed. State records the accepted
+source digest, evidence archive and exact candidate in a subsequent local
+documentation receipt, avoiding a circular self-referencing commit hash.

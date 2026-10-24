@@ -190,14 +190,15 @@ saved in gate.json/logs; native SQLite inventories retain DB/WAL/SHM and full
 payloads under the reported Linux evidence path. The test dispatcher/VFS and
 its environment controls exist only in test targets, never the installed binary.
 
-The original release PG writer scenarios and demo remain historical
+The original release PG writer scenarios and `tests/interview_demo.py` remain historical
 fixtures for the archived 1.0 implementation. Stage 1 replaces their PG outage
 assumptions with local-capacity/crash assertions; the new Stage 2 fixtures assert durable replay, receipt verification and retirement. The current gate preserves
 original unit, Python, vcan, monitoring, finite load, manual, fuzz and v1 SQL
 contracts, plus local fault/recovery/supervision tests. Stage 2 adds real PG rollback/ambiguity/retirement/crash/FIFO/poison/deadline
 and concurrency contracts in `tests/resilience_replay.py` and
 `tests/resilience_database_contract.py`. Hardware/power-cut
-qualification and the remote 60-second benchmark remain unclaimed.
+qualification remains separate; the Stage 4 measured benchmark is in
+[RESILIENCE_PERFORMANCE.md](RESILIENCE_PERFORMANCE.md).
 
 ## Replay lifecycle and accounting
 
@@ -229,3 +230,6 @@ retains <=50 ms deadline/shutdown polls. Test Helgrind uses a narrow suppression
 for libp11-kit ELF-finalizer mutex diagnostics and glibc internal replacement
 wakes from timed waits; no Vigil race, lock-order or direct mutex/signal call
 is suppressed. System-library internals are outside sanitizer proof.
+
+Current production-binary demonstration: `scripts/demo --build build-resilience-release`.
+Setup, upgrade/rollback and independent-review handoff: [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md).

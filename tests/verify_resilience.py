@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Clean Stage 3 gate: original regressions, exact cuts, seeded combinations
-and sustained backlog/replay on isolated real Linux/SQLite/PostgreSQL.
+"""Clean release-candidate gate: regressions, faults, demo and matched benchmarks
+on isolated real Linux/SQLite/PostgreSQL. No independent-verification claim.
 """
 import argparse
 from datetime import datetime, timezone
@@ -59,6 +59,7 @@ def main():
               ("tsan", "Debug", "gcc", ["-DVIGIL_TSAN=ON"])]
     for name, kind, cc, flags in builds:
         build = "build-resilience-" + name
+        flags = [*flags, "-DVIGIL_BENCHMARKS=ON"]
         if args.clean and (ROOT / build).exists():
             shutil.rmtree(ROOT / build)
         run(f"strict {name} configure", ["cmake", "-S", ".", "-B", build, "-DCMAKE_BUILD_TYPE=" + kind, "-DCMAKE_C_COMPILER=" + cc, *flags])
@@ -95,13 +96,17 @@ def main():
     run("original independent can-utils exchange", [".venv/bin/python", "tests/manual_commands.py", "--decoder", "build-resilience-debug/vigil-decode", "--output", str(out / "manual")])
     run("original decoder libFuzzer/ASan/UBSan 120-second budget", ["./scripts/fuzz", "120", str(out / "fuzz")])
     run("hosted CI commands including v1/v2 PG contracts", ["./scripts/check-ci", "--clean"])
+    run("production-binary interview: outage, durable backlog, SIGKILL/restart, old-run replay, ambiguous duplicate suppression and exact final inventory",
+        ["./scripts/demo", "--build", "build-resilience-release", "--output", str(out / "demo")])
+    run("three alternating matched original/resilience runs: excluded 2s warmup, >=60s measured workload, exact counts, latency distributions and resource samples",
+        ["./scripts/benchmark", "--build", "build-resilience-release", "--runs", "3", "--seconds", "60", "--output", str(out / "benchmark")])
     for path in sorted((ROOT / "scripts").iterdir()):
         run("shell syntax " + path.name, ["bash", "-n", str(path)])
     run("diff whitespace", ["git", "diff", "--check"])
     assert report["source_sha256"] == source_digest(), "implementation changed during gate"
     report["completed_utc"] = datetime.now(timezone.utc).isoformat()
     (out / "gate.json").write_text(json.dumps(report, indent=2))
-    print(f"PASS Stage 3 clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
+    print(f"PASS release-candidate clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
 
 
 if __name__ == "__main__":

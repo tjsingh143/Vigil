@@ -1,5 +1,9 @@
 # Vigil Resilience failure contract — Stage 0B
 
+Stage 4 release reference: [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md),
+with event-state meanings below unchanged. Acceptance wording for earlier
+stages is historical; observed current results are in RESILIENCE_STATE.md.
+
 Contract version 1, 2026-10-22 America/Los_Angeles. **Design acceptance criteria;
 the full target; local Stage 1 and remote Stage 2 are implemented. Current scope and
 evidence are in [OUTBOX.md](OUTBOX.md) and [RESILIENCE_STATE.md](RESILIENCE_STATE.md).**

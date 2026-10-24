@@ -1,5 +1,10 @@
 # Vigil Resilience architecture — Stage 0B
 
+The completed Stage 4 architecture diagram and operating/review instructions
+are in [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md). Design-time future-tense
+sections below retain their original checkpoint context. Current implementation
+and verification identity are in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
+
 Design version 1, 2026-10-22 America/Los_Angeles. **Full architecture target.**
 Stage 1 local implementation/status: [OUTBOX.md](OUTBOX.md),
 [RESILIENCE_STATE.md](RESILIENCE_STATE.md). Stage 2 replay is implemented; current operation and refinements are in OUTBOX.md and the amendment below.

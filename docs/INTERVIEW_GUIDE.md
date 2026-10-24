@@ -1,185 +1,83 @@
-# Demonstrating and explaining Vigil
+# Demonstrating Vigil Resilience
 
-Read this with [the learning guide](LEARNING_GUIDE.md). The implementation was
-agent-authored under the owner's instructions, a recorded deviation from brief
-section 7. Understand and demonstrate it yourself before claiming personal
-implementation or testing experience. This guide describes observable behavior.
+Vigil is a C/Linux sensor monitor with three owners: main owns live alarms,
+SQLite commits local history, and libpq replays it to PostgreSQL. Its queue is
+volatile. A successful FULL/WAL transaction plus directory sync establishes the
+local crash-survival boundary. Remote history is verified by original identity
+and exact receipt bytes before local retirement. Retries can transmit more than
+once while producing one logical effect. This is a custom CAN protocol, not
+A-Link, CANopen compatibility or sender authentication.
 
-## Thirty seconds
+Implementation and tests were agent-authored at the owner's direction. Explain
+the code personally before using any resume wording; passing automation does not
+certify understanding or independent verification.
 
-“Vigil is a C sensor monitor on Linux. Python pods send temperature, door and
-heartbeat messages over SocketCAN. The daemon checks freshness, publisher
-progress and measurement plausibility separately. Its main loop owns live
-alarms; a separate thread writes PostgreSQL history through a bounded queue.
-The demo stops a pod and the database, then shows stale detection, exact queue
-loss and recovery. It uses a custom protocol, not A-Link.”
+## Run and narrate
 
-## Two-minute architecture explanation
-
-Start at a frame: the decoder accepts only supported classic CAN IDs, exact
-payload lengths, CRC and field encodings. It builds a temporary result and
-publishes it only on success. Wire validity alone does not make a measurement
-physically plausible or identify its sender.
-
-The main thread waits in `poll()` on CAN, `timerfd` and `signalfd`. A periodic
-monotonic timer checks deadlines even when the bus is silent. CAN processing
-is capped at 64 frames per turn so timers and shutdown get opportunities to run.
-Each channel has its own last usable value and freshness; heartbeat is separate.
-Sequence progress belongs to the CAN-ID stream. Temperature and door therefore
-share one counter, while heartbeat has another. Range, rate and flatness have
-different meanings. Flatness is suspicion, and threshold hysteresis prevents
-repeated alarm toggles around one boundary.
-
-Main owns all live alarms. It copies readings/events and alarm snapshots into
-bounded storage protected by a mutex. The persistence thread copies a batch,
-releases the mutex, and then performs libpq I/O. A slow database cannot hold
-the queue lock. During an outage, pending queues fill and evict oldest records
-with exact counters. Recovery writes retained history, known gaps and a current
-alarm snapshot. An immutable batch ID makes retry safe if the COMMIT response
-was lost. Pending memory still disappears on a daemon crash.
-
-systemd runs the daemon as an unprivileged user, receives readiness, watches
-main-loop heartbeats and restarts failures. All this was exercised on real
-Ubuntu ARM64, vcan, PostgreSQL and systemd. vcan validates application behavior;
-it cannot demonstrate electrical CAN behavior or hardware portability.
-
-## Run the demonstration
-
-From the macOS host, in this repository:
+After [Linux setup](RESILIENCE_RELEASE.md), from the repository root:
 
 ```sh
-cd /Users/tj/Desktop/Vigil
 ./scripts/dev ./scripts/vcan-up
-./scripts/dev ./scripts/demo
+./scripts/dev cmake -S . -B build-resilience-release -DCMAKE_BUILD_TYPE=Release
+./scripts/dev cmake --build build-resilience-release --parallel 2
+./scripts/dev ./scripts/demo --build build-resilience-release
 ```
 
-The VM and dependencies must already be installed and `build/vigild` built;
-follow [README](../README.md) for a fresh setup. Keep `vcan0` idle: stop your
-other simulators and the installed default service before demonstrating.
-Inside Linux the command is `./scripts/demo`. It uses a disposable PostgreSQL
-cluster and removes it afterward; it does not stop the default database.
+Keep vcan0 idle except for this command. It uses the production daemon and its
+own disposable native SQLite store and PostgreSQL cluster. It never stops the
+installed PG server. The closing path contains `results.json`, daemon stdout,
+stderr/config, stopped SQLite inventories and `remote.json` with full exact
+receipts, history, checkpoints and origins. Assertions fail the command; do not
+narrate success after a failed result. Batch/history totals may vary as alarm
+transitions and grouping depend on scheduling; the saved final counters are exact
+for that run. The offered reading total is fixed at 20.
 
-The script prints expectations, narrates the story and asserts results. Any
-failure exits nonzero. The closing line names a new directory under `artifacts/`.
-It contains `results.json`, raw daemon output/configuration and SQL exports in
-`interview/history.json` and `interview/checkpoints.json`. Those exports remain
-after the disposable database is removed. Keep the terminal result visible.
-
-| Stage | Explain while it runs | Expected output concepts |
-| --- | --- | --- |
-| Healthy pod | Three cycles contain six readings and three heartbeats | `freshness=fresh`, `current=1`, accepted counts |
-| Pod silent | Each channel and heartbeat expires independently | 500 ms configured deadline, actual detection age, old value with `current=0` |
-| Pod returns | Silence allows new counter baselines | Three recoveries; eight readings now committed |
-| Database stops | Writer detects failure; main still processes input | `persistence_degraded=1`, capacity four, no readings in flight |
-| Eleven hot readings | High alarm and later freshness timeout still work | Seven oldest pending readings dropped, newest four retained |
-| Database returns | Reconcile queue counters with actual SQL | Twelve total SQL readings, seven-reading gap, no event loss, degraded clears |
-| Clean stop | Join writer after its bounded drain | Zero abandoned records for this run; evidence paths |
-
-Say “observed failure duration,” not the exact physical instant the database
-became unavailable. The printed latency and run UUID change per execution.
-Use [final verification](FINAL_VERIFICATION.md) for release measurements.
-The high alarm remains active when hot data goes stale: silence is not evidence
-of cooling. The automated demo intentionally ends in that honest state.
-
-For a slower interactive explanation, follow [MANUAL_CAN.md](MANUAL_CAN.md).
-Show `101#0098080000B7`, explain little-endian 2200 = 22.00 C, then send its
-bad-CRC variant. `vigil-decode` deliberately exits 1 after malformed input;
-that is an expected rejection, not a crashed program.
-
-## Why these choices exist
-
-| Choice | Reason and cost |
+| Step | Evidence to point at |
 | --- | --- |
-| One main loop | One owner for monitoring/alarm state; Linux-specific descriptors |
-| Monotonic deadlines | Wall-clock corrections cannot change source ages; timestamps describe host processing time |
-| Separate persistence thread | Network waits cannot hold up CAN/timeouts through the queue mutex; introduces synchronized state |
-| Value-owned queue records | No borrowed pointer can outlive a stack CAN frame; copying has bounded cost |
-| Separate event reserve | Alarm chatter cannot consume reading capacity; events can still overflow independently |
-| Immutable in-flight batch | Lost COMMIT response does not justify dropping possibly committed records; adds up to 32 records to the bound |
-| UUID and batch ledger | Same-process retry is idempotent; a new process cannot reconstruct vanished memory |
-| Memory alarm authority | Monitoring remains truthful during DB outages; restart loses live state |
-| Hysteresis | High raises at 27 C, clears at 26 C; in-band values hold state |
-| Guest Linux/vcan | Real SocketCAN without hardware; separate kernels have separate interfaces |
+| 1. Healthy sensors | Three cycles: six readings and three heartbeats, current values |
+| 2. SQLite admission | Six locally admitted readings and confirmed remote retirement; distinguish RAM publication from durability |
+| 3. Stop PG | Only the disposable cluster stops; degraded is raised |
+| 4. Continue monitoring | Twelve high readings enter durable backlog; subsequent silence marks the value stale while high remains active |
+| 5. SIGKILL | Local completion precedes kill; there is no shutdown-handler explanation for survival |
+| 6. Restart before PG | New run starts with unknown live measurements; durable backlog remains |
+| 7. Original records present | A brief clean stop permits supported offline byte/identity audit, followed by reopening the same store |
+| 8. Restore PG | Route this fixture through a response-withholding proxy |
+| 9. Old-run replay | Independent SQL confirms original receipt bytes while the client receives no success |
+| 10. Ambiguous duplicate | At least two identical submissions, one remote logical effect, local head retained; a second SIGKILL demonstrates restart-safe equality |
+| 11. Current alarms/history | Direct healthy restart drains old work; two new readings raise then clear current high; replay never initializes live values |
+| 12. Exact reconciliation | 20 remote readings; lifetime admitted = retired; pending records/batches/bytes zero; known gap losses zero; final volatile abandonment zero |
 
-## Likely technical questions
+Do not infer zero arbitrary event loss across a kill from a zero saved gap.
+All offered demo readings reconcile, but unsaved crash-time counters/events may
+be unknowable. An observed detection age includes Linux scheduling and timer
+quantization. SIGKILL is not power-loss testing. Resource teardown runs on
+normal/error/SIGINT/SIGTERM exits; SIGKILL of the harness requires scoped manual
+cleanup from fixture paths in the logs.
 
-**What does the decoder validate first?** Arguments, frame format, ID, exact
-length, CRC, then enums/value encoding. Rejection leaves its output unchanged.
+## Explain the hard parts
 
-**Why not cast payload bytes to a struct?** Padding, alignment, byte order and
-signed conversion would become assumptions. Explicit shifts and a representable
-int32 subtraction decode int16 safely.
+- Trace `queue_take_local → outbox_append → outbox_peek → replay_batch → outbox_retire`.
+  Copies and synchronization establish ownership; FULL/directory sync establish
+  local durability; validated PG success permits retirement.
+- Explain an unknown COMMIT: timeout does not prove rollback. Retry original
+  bytes, verify `equal`, then retire transactionally. Different bytes under the
+  same identity produce VG001 and block FIFO until operator investigation.
+- Explain old/current run counters: lifetime retirement includes recovered runs;
+  current-run written/loss/revision cursors do not inherit old live health.
+- Explain capacity: N readings, 256 events and one held candidate in RAM; durable
+  record/batch/payload ceilings are shared. The first exhausted limit stops
+  admission; durable history is never evicted. RAM can still overflow behind it.
+- Explain stale versus high versus flat: silence expires freshness; only new
+  usable evidence clears a high alarm; flat values are suspicion, not proof.
+  CRC and counters detect anomalies but do not authenticate.
+- Explain performance boundaries using [measured results](RESILIENCE_PERFORMANCE.md):
+  direct core-call latency, single-owner SQLite API timing, and paced daemon
+  throughput/recovery are different measurements. No hard real-time, physical
+  CAN or universal-capacity claim follows.
 
-**Can heartbeat make a stale temperature healthy?** No. They have independent
-freshness deadlines and communication alarms.
-
-**Dead pod or quiet one?** Missing usable data means communication loss for that
-source. It cannot distinguish stopped software, power loss or a broken link.
-Advancing heartbeats can show a communicating pod with a stale measurement.
-
-**Stable room or stuck sensor?** Equal values with advancing counters can be
-legitimate. Flatness raises a warning after a window; it does not invalidate
-the value or prove failure. Repeated counters are a separate progress fault.
-
-**What happens at counter wrap?** 255→0 is progress. Delta 1–127 is accepted,
-delta 0 repeats, delta 128–255 is old/ambiguous. Replays across wraps and quick
-restarts are not reliably distinguishable. Uptime resets do not bypass checks.
-
-**Does CRC prevent spoofing?** No. It covers payload bytes, not CAN ID, and any
-sender can compute it. Counters indicate sequence anomalies, not identity.
-
-**What is shared between threads?** Copied records/snapshot, queue metadata,
-counters and stop/wakeup state under one mutex. Neither live monitor structs
-nor the libpq connection are shared.
-
-**What happens during DB failure?** Failure is observed, degraded raises,
-retries are paced, main continues monitoring, and pending oldest records are
-evicted if capacity is exhausted. Recovery reconciles rows, gaps and snapshots.
-
-**What does capacity four really mean?** Four pending accepted readings, plus
-256 pending events and one shared immutable batch of at most 32 records.
-The demo explicitly settles the outage with zero readings in flight before
-its eleven-arrival/seven-drop calculation.
-
-**What survives SIGKILL?** Actually committed SQL rows, subject to PostgreSQL
-durability. Pending memory and counters disappear. An unconfirmed transaction
-may already be committed. The controlled stopped-DB crash test proves three
-known lost readings; arbitrary crash loss cannot be reconstructed.
-
-**How would you make the queue durable?** A bounded disk journal with flushing,
-replay, acknowledgement, compaction, corruption and full-disk policy, followed
-by crash/power-loss tests. A plain file write is insufficient.
-
-**What did the fuzzer find?** The recorded finite decoder runs found no crash,
-sanitizer report or invariant violation. Quote the execution count and duration
-from final verification. It does not fuzz threads, SQL, alarm state or hardware.
-The audit's SQLSTATE parsing defect was found by review, not by libFuzzer.
-
-**Can you promise the timeout?** The deadline is exact in the clock-driven
-core. Live observation adds timer quantization and scheduler delay. The 500 ms
-fixture allows 20 ms ticks plus 200 ms explicit test allowance; no hard real-time
-guarantee is made.
-
-**What did the load test measure?** A finite offered message burst with
-persistence disabled. Sent frames equal received frames plus kernel socket
-drops after a probe. It measures neither sustained database throughput nor
-physical CAN arbitration/bitrate limits.
-
-**What changes on hardware?** Interface selection and much of the logic can
-carry over. A board image, controller driver/device tree, bitrate, wiring,
-termination and physical validation are new work. QEMU alone would not prove them.
-
-**What limitations would you prioritize?** Start from the intended deployment:
-crash durability, source timestamps for rate checks, real CAN validation and
-history retention are separate design decisions. They are outside this release.
-
-## Avoid unsupported claims
-
-No A-Link/CANopen compatibility, sender authentication, crash-durable queue,
-hard real-time guarantee, production throughput or hardware validation. The
-workflow commands passed locally; a hosted GitHub Actions run has not occurred.
-Diagnostic pipes can drop counted lines; regular-file output and local libpq
-credential/certificate reads can block. Network deadlines do not bound all
-filesystem or scheduler behavior. The optional Buildroot build was deferred
-without producing an image; its incomplete work was removed. There is no
-embedded-image claim. The attempt is recorded in final verification.
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md) covers architecture, setup,
+capacity, upgrade/rollback, storage assumptions and review handoff;
+[RESILIENCE_FAULT_TESTS.md](RESILIENCE_FAULT_TESTS.md) maps failure reproduction.
+The original volatile-writer demo remains `tests/interview_demo.py` for the
+pinned original binary only; its eleven-arrival/seven-loss story is not the
+current outbox contract.

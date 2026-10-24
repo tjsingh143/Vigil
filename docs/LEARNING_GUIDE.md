@@ -688,3 +688,39 @@ now uses a bounded 15-second statement budget and surfaces PG stderr. It still
 must return one coherent complete snapshot, and the daemon keeps its original
 query deadlines. Increasing that export budget does not permit missing or
 unequal rows to pass an integrity assertion.
+
+## Resilience Stage 4 — defend a measured claim
+
+Use [the current interview guide](INTERVIEW_GUIDE.md) and
+[release handoff](RESILIENCE_RELEASE.md); earlier volatile-writer walkthroughs
+above retain their historical context. Trace all three owners and distinguish
+queued, locally committed, remotely committed and locally retired. The production
+demo reconciles 20 offered readings across PG outage, SIGKILL/restart and lost
+responses. It does not reconstruct arbitrary unsaved crash-time event losses.
+
+Before quoting [performance](RESILIENCE_PERFORMANCE.md), name the boundary. A
+pure monitor call omits SocketCAN, callbacks, queuing and scheduling. A
+single-owner enqueue-to-append-return probe includes copying/serialization,
+SQLite commit and directory sync, but omits daemon-worker idle scheduling and
+PG replay. BEGIN-to-COMMIT excludes pretransaction JSON validation and the later
+directory sync. A paced daemon trial measures whether the offered workload is
+handled, not the maximum possible throughput. Drain after PG returns includes
+backoff, backlog shape, transaction work and status-observation delay.
+
+Predict why Resilience can use more CPU/memory and replay more slowly than the
+original: it adds local FULL transactions, durable identities, payload validation,
+content verification, retained receipts and retirement. Durability has a cost.
+Compare all runs and their spread, not a favorable sample. Percentiles from
+three trial totals describe those three trials; per-call percentiles have a
+separate larger sample population. Explain clock overhead and the absence of
+physical CAN/power-cut/hard real-time qualification. The source hash, pinned
+baseline, binary hashes, exact commands and retained failures make a claim
+reviewable; they do not make it independently verified.
+
+The accepted Stage 4 comparison illustrates the cost: median local admission
+was 99.99 readings/s, while remote window commit rate was 82.50 readings/s
+against a 100/s offer. Explain why a finite zero-loss run can still accumulate
+backlog and eventually reach capacity if that service-rate difference persists.
+The original's corresponding remote rate was 100.00/s; its faster path does not
+provide the local process-crash boundary. Use the full per-trial ranges and
+measurement definitions in the performance report, not a single number alone.
