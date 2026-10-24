@@ -6,9 +6,10 @@ benchmarks, full gates, demo/docs and local commits; no deployment, production
 change, push, history rewrite or publication. Full v3 brief, required records,
 source/tests and original-baseline diff reviewed; initial Release gate passed.
 
-Candidate identity: the local implementation commit carrying SHA-256
-`88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`; literal commit ID is recorded in the following local
-documentation receipt. Exact results/handoff: [docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md).
+Release-candidate commit: `29b049ea8e5c8a978fb2125b517fd8a17b70e2ee`.
+Tested implementation SHA-256:
+`88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`.
+This documentation-only receipt changes no tested implementation. Exact results/handoff: [docs/RESILIENCE_STATE.md](docs/RESILIENCE_STATE.md).
 Full clean native Linux gate **68/68 zero exits**, 2026-10-24T17:28:50.960947+00:00 through
 2026-10-24T17:55:45.543621+00:00; source unchanged. Raw: artifacts/resilience-stage4/final3/.
 GCC/Clang, Debug/Release, ASan/UBSan/TSan, SQL v1/v2, all existing local/remote

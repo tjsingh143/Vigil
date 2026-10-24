@@ -6,8 +6,9 @@ explicitly authorized Stage 4 benchmarking/release work and local commits,
 superseding historical stops below. No production-data/service change,
 deployment, push, remote release, history rewrite or publication occurred.
 
-Release-candidate revision: the local commit carrying the tested digest below;
-a following documentation receipt records its literal commit ID after creation.
+Release-candidate commit: `29b049ea8e5c8a978fb2125b517fd8a17b70e2ee`.
+This following documentation receipt records that immutable candidate identity;
+it changes no implementation or verification result.
 Tested parent: `51582d13d28c58221bdce9fe18447d94ba501c3f`. Implementation SHA-256:
 `88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`.
 Docs/state/README are excluded from this digest; source/binary metadata in the
