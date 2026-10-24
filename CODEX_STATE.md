@@ -1,3 +1,40 @@
+# Current work — Resilience Stage 3 COMPLETE
+
+**Stage 3 PASS. STOP; do not start Stage 4.** One agent; no delegation.
+Started clean main at `4c179bc`. Owner authorized tests/fixes/docs/local commit;
+no production change, deployment, push or publication. Full brief/required
+records/source/previous changes independently read. Fresh Debug C and exact
+three-reading CAN/outage/restart/PG smoke passed first.
+
+Final clean Linux gate: **65/65 zero exits**, 2026-10-24T03:39:42.514284 through
+04:26:17.973237 UTC. Source digest
+`00e7ccce3b54300f78110fee75ad29268e899205908e01ee30f0a73412c75c00`.
+Raw evidence: artifacts/resilience-stage3/final3/. Full scenario/defect/limits
+report: docs/RESILIENCE_FAULT_TESTS.md; persistent result: docs/RESILIENCE_STATE.md.
+All 21 categories passed. Seeds 0–59 Debug plus 0/7/47/48 each Release/ASan/TSan:
+72 final executions, 156 selected kills; 75 new case groups, zero failures.
+Including development: 199 seed executions/60 unique. Existing 130 local cuts,
+48 retirement cuts, 26 remote response-gap kills and regressions passed.
+6000 backlog + 128 new readings = 6128 exact remote readings, zero loss/pending;
+189 batches, 0.674 s restart, 5.359 s drain, 509 ms stale at 500 ms timeout. Six unit
+builds: 390 C cases; sanitizers/Helgrind/analyzer/CAN/manual/CI commands passed.
+Fuzz: 90815924 inputs / 121 s / 288 MiB, no finding. No hosted CI claim.
+
+Harness fixes: default DB targeting, atomic PG inventory, startup/pacing/batching
+oracles, bounded bulk-export budget and error diagnostics. Two failed complete
+attempts are retained; focused fix rerun and full final gate passed. Production
+C/schema/protocol/service unchanged; no confirmed implementation defect found.
+Native archive: 14194488 bytes, SHA-256
+`bea05534fc0971baedb755959be4e7ed4b60b9120e9a3b9a607dcc75fa21fb19`.
+No test daemon/mount/unit remains; default vigild inactive, PG 16/main online.
+Power cuts, XFS, physical CAN, failover, simultaneous maxima and latency/heap/lock
+instrumentation remain unqualified. Corruption exclusions and volatile queued/
+held loss remain explicit. Reviewed checkpoint identity: git log -1 --oneline.
+
+---
+
+# Historical Stage 2 state
+
 # Current work — Resilience Stage 2 COMPLETE
 
 **Stage 2 PASS. Stop; do not start Stage 3.** The owner authorized implementation,

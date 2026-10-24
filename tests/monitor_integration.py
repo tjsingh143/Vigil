@@ -63,7 +63,7 @@ def progress(snap, pod, channel):
 
 
 class Daemon:
-    def __init__(self, executable, config, persistence=False, extra_args=(), env=None, pipesize=-1):
+    def __init__(self, executable, config, persistence=False, extra_args=(), env=None, pipesize=-1, startup_timeout=5):
         self.config = tempfile.NamedTemporaryFile(mode="w+", prefix="vigil-live-", suffix=".conf")
         self.config.write(config)
         self.config.flush()
@@ -78,7 +78,7 @@ class Daemon:
         self.errors = bytearray()
         self.allow_rx_overflow = False
         try:
-            assert select.select([self.child.stderr], [], [], 5)[0], "daemon readiness timeout"
+            assert select.select([self.child.stderr], [], [], startup_timeout)[0], "daemon readiness timeout"
             line = self.child.stderr.readline()
             self.errors.extend(line)
             assert line.startswith(b"ready "), line

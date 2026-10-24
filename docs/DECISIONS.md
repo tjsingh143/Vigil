@@ -464,3 +464,38 @@ clear transition. Healthy buffering now only holds a pre-existing degradation;
 failures/new losses still raise it. PG startup waits for the complete initial
 snapshot, preventing a health probe racing the first main-owned alarm update.
 The queue policy has a direct regression and maximum-snapshot remote evidence.
+
+## Resilience Stage 3 — adversarial proof (2026-10-23 local)
+
+The owner authorized Stage 3 fault testing, minimal safely scoped fixes and a
+local checkpoint commit, superseding Stage 2's historical stop. One agent only.
+The full brief v3 and required records, actual SQLite/libpq/SQL implementation,
+previous tests and Stage 2 changes were read independently. A fresh native
+Debug build/C gate and an independently written CAN/local/restart/PG smoke
+passed before harness changes. No production migration/data/service operation,
+deployment, push or publication is authorized.
+
+Reuse the existing Python/Linux fixtures and test-only pipe/VFS dispatcher.
+Add 60 distinct composed schedules, actual server-transaction daemon kill,
+corrupt/truncated offline clones and a 6000-reading sustained backlog with
+concurrent arrivals on replay. Every stopped inventory checks the union of
+exact SQLite payloads and exact remote receipts; seed combinations test the
+SQLite owner pause separately from the PG owner pause. PG dumps use one
+statement snapshot to avoid exporting mixed states around server commit.
+Production control isolation remains a mandatory assertion. See
+[RESILIENCE_FAULT_TESTS.md](RESILIENCE_FAULT_TESTS.md) for observed evidence,
+coverage, reproduction, pilot corrections and boundaries still unqualified.
+
+A 60-second/100-per-second stream can exhaust 4096 batches before 65536 records
+because batching is scheduler-dependent. That is correct capacity behavior,
+not a guarantee of fitting every 6000-record arrival shape. The backlog/drain
+fixture uses handshaked groups of 32, with a test-only release-and-disable
+command, leaving all production caps/algorithms unchanged. Ordinary overflow
+and FULL tests retain their exact accounting assertions.
+
+The complete gate reproduced an evidence-export timeout after the large replay
+had drained. Single-snapshot bulk JSON export inherited the helper's 2-second
+small-query statement timeout. Its administrative statement now gets 15 seconds,
+inside the existing 20-second subprocess bound; daemon SQL/deadlines and all
+content assertions are unchanged. Export errors retain server stderr. Failed
+attempts and the successful focused rerun remain separate from final acceptance.

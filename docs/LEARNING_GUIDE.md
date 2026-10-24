@@ -644,3 +644,47 @@ survived, but the status equations disagreed. Storage now reconciles/publishes
 that retirement before another mutation. Follow `retire_blocked` in the owner
 loop and the forced `retire_commit_unknown` case; both spool and current-origin
 equations must hold in every copied status pair, not only after eventual drain.
+
+## Resilience Stage 3 — try to falsify the contract
+
+Read [the fault-test report](RESILIENCE_FAULT_TESTS.md), then choose a seed and
+predict every intermediate inventory before running it. Keep a map from
+spool order to exact payload. After each kill, every earlier durable payload
+must still exist locally or match a committed remote receipt. A count of ten
+rows cannot prove the same ten identities survived. Inspect the original run,
+sequence, token, observation time, receipt bytes, snapshot and loss capture.
+
+Pausing PG and pausing SQLite prove different things. New local admissions
+must continue while PG is paused. A paused SQLite owner cannot commit new
+inputs, but main must keep monitoring and its new queue inputs are volatile.
+A crash can legitimately lose those inputs. Do not add them to a promised
+durable set or invent a known historical gap after restart.
+
+Storage has several ceilings. A 6000-record stream can reach the 4096-batch
+ceiling if the worker commits small batches. That is FULL, not corruption or
+an unlimited-record promise. The large replay fixture deliberately groups
+32 arrivals with worker handshakes so its drain assertion is independent of
+scheduler-selected batching; separate FULL cases still test refusal/accounting.
+
+Corrupting a DB page while preserving its complete recovery WAL can allow
+SQLite to restore the page. A standalone damaged schema/header must refuse
+startup. Destroying a final WAL commit frame can instead leave a consistent,
+shorter committed prefix. That corruption violates the storage-survival
+assumption; no application-side allocator check can reconstruct destroyed bytes
+or always distinguish that prefix from an earlier legitimate database. Contrast
+these cases with a plain SIGKILL, which does not alter committed disk bytes.
+
+A test can be wrong: fixed startup waits can ignore a documented validation
+budget; clock reads can straddle a pacing deadline; separately exported SQL
+tables can straddle a commit; ambient database defaults can select unsafe
+endpoints. Fix the oracle/fixture and rerun the full gate. Retain failed trials
+and state what each actually established. Passing process-crash tests still
+cannot certify hardware flushes, power-loss survival or personal understanding.
+
+Keep the operation's purpose in its deadline. A bulk administrative export of
+all 6128 readings/receipts is evidence collection, whereas the daemon sends one
+bounded batch. The full gate reproduced a 2-second export timeout; the exporter
+now uses a bounded 15-second statement budget and surfaces PG stderr. It still
+must return one coherent complete snapshot, and the daemon keeps its original
+query deadlines. Increasing that export budget does not permit missing or
+unequal rows to pass an integrity assertion.

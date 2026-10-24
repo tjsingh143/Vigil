@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Clean Stage 2 gate; keeps original sensor/protocol/v1-PG contracts and adds
-local durability and PostgreSQL reconciliation gates. No Stage 3 benchmark.
+"""Clean Stage 3 gate: original regressions, exact cuts, seeded combinations
+and sustained backlog/replay on isolated real Linux/SQLite/PostgreSQL.
 """
 import argparse
 from datetime import datetime, timezone
@@ -25,6 +25,11 @@ def main():
     args = ap.parse_args()
     assert sys.platform == "linux" and not sys.flags.optimize
     os.chdir(ROOT)
+    # Inherited service/options/credentials or fault controls cannot select test
+    # endpoints. Each PG fixture allocates its own cluster and explicit route.
+    for key in list(os.environ):
+        if key.startswith(("PG", "VIGIL_DB_", "VIGIL_TEST_")):
+            os.environ.pop(key)
     args.output.mkdir(parents=True, exist_ok=False)
     out = args.output.resolve()
     commands = []
@@ -70,6 +75,10 @@ def main():
         run("A-J exact remote crash/commit cuts, FIFO/origin/poison/outage/deadline assertions (" + name + ")",
             [*prefix, ".venv/bin/python", "tests/resilience_replay.py", "--build", build, "--output", str(out / (name + "-replay")),
              "--restarts", "20" if name == "debug" else "2", *(["--timing"] if name == "debug" else [])])
+        run("Stage 3 deterministic mixed crashes, exact durable union and replay resource assertions (" + name + ")",
+            [*prefix, ".venv/bin/python", "tests/resilience_adversarial.py", "--build", build,
+             "--output", str(out / (name + "-adversarial")),
+             *([] if name == "debug" else ["--seed", "0", "--seed", "7", "--seed", "47", "--seed", "48"])])
     run("real ext4 ENOSPC/read-only and unprivileged hardened systemd SIGKILL/watchdog recovery",
         [".venv/bin/python", "tests/resilience_storage.py", "--build", "build-resilience-debug", "--output", str(out / "physical")])
     for scenario in ("silent-pod", "malformed", "non-advancing", "counter-jump", "hysteresis", "high-rate", "receive-overflow"):
@@ -92,7 +101,7 @@ def main():
     assert report["source_sha256"] == source_digest(), "implementation changed during gate"
     report["completed_utc"] = datetime.now(timezone.utc).isoformat()
     (out / "gate.json").write_text(json.dumps(report, indent=2))
-    print(f"PASS Stage 2 clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
+    print(f"PASS Stage 3 clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,71 @@
+# Vigil Resilience state — Stage 3 COMPLETE
+
+**Stage 3 PASS for the software failure contract. Stop; do not start Stage 4.**
+One Codex agent, no delegation. Started clean main at `4c179bc`. The owner
+explicitly authorized fault tests, scoped fixes, documentation and a local
+checkpoint commit. No production data/service changes, deployment, push or
+publication. The complete v3 brief, required records, actual local/remote code
+and previous changes were independently read. A fresh Linux Debug C gate and
+an independent CAN/outage/restart/PG smoke passed before harness changes.
+
+The final complete clean Linux gate passed **65/65 commands**, zero failures,
+recorded 2026-10-24T03:39:42.514284–04:26:17.973237 UTC. Evidence:
+`artifacts/resilience-stage3/final3/gate.json`. Workspace/native implementation
+SHA-256: `00e7ccce3b54300f78110fee75ad29268e899205908e01ee30f0a73412c75c00`.
+The unchanged-source assertion passed. Tested parent is
+`4c179bceffa731302324cf5a35ad6ccd89408adc`; the reviewed checkpoint hash is
+`git log -1 --oneline`, supplied in the delivery response.
+
+[Fault-test report](RESILIENCE_FAULT_TESTS.md) maps all **21/21 requested scenario
+categories**, exact boundaries, commands, raw logs/JSON and limitations.
+Seeds **0–59** passed Debug; **0/7/47/48** passed each other build: **72 final
+seed executions, 156 selected kills, zero failures**. New case groups: **75
+passed, zero failed**. Earlier pilots/incomplete gates add 127 seed executions
+(199 total, 60 unique); they are explicitly separated from acceptance.
+All known durable orders remain in SQLite or match exact PG receipt bytes;
+full remote history/origins/snapshots/gaps and local prefix/counters reconcile.
+
+The sustained case admitted 6000 readings in 189 batches, then 128 new readings
+while PG replay was paused. All **6128** remotely verified, zero drops/pending;
+restart **0.674 s**, drain **5.359 s**, stale age **509 ms** at a 500 ms deadline.
+Seeded stale ages were **501–522 ms**. Max sampled daemon RSS **11812864 bytes**,
+WAL **1363752 bytes**; managed file bounds passed. Existing record/batch/byte
+and volatile overflow, real ext4 FULL/read-only, crash/watchdog, CAN/protocol/
+monitoring and v1/v2 PG regressions all passed in their declared variants.
+Six unit builds passed **390 C cases**; ASan/UBSan/TSan, scoped Helgrind, analyzer,
+manual CAN, fuzz and local CI command subset passed. Decoder fuzz: **90815924
+inputs / 121 reported seconds / 288 MiB RSS**, no finding. Hosted CI unclaimed.
+
+Harness review fixed unsafe default-DB fallback, mixed-snapshot PG exports,
+startup/pacing assumptions and scheduler-dependent backlog batching. A test-only
+release-and-disable pipe command permits deterministic 32-reading groups; no
+production algorithm or cap changed. Two complete attempts stopped on bulk PG
+evidence export; the second retained the actual 2-second statement-timeout error.
+Administrative exports now have a 15-second statement / 20-second outer budget;
+daemon deadlines/integrity assertions stay unchanged. Focused rerun and final
+complete clean gate passed. Failed attempts and corrected oracles remain saved.
+No confirmed implementation defect was found in the covered scope.
+
+Thirteen native evidence roots are archived under `final3/native-inventories.tar.gz`,
+14194488 bytes, SHA-256
+`bea05534fc0971baedb755959be4e7ed4b60b9120e9a3b9a607dcc75fa21fb19`.
+No test daemon, loop mount or transient unit remains; default vigild inactive,
+PG 16/main online. Final diff and harness review covered safe target ownership,
+byte-level oracles, actual kill points, known versus volatile loss and bounded
+waits. Docs/learning/decisions updated before local commit.
+
+Unverified: power-cut/media survival, XFS/physical CAN/hardware, failover, all
+simultaneous physical ceilings, full latency percentiles/SQLite-heap/lock timing.
+RSS/file samples are finite evidence. Corruption may destroy a final WAL commit
+and leave a valid shorter prefix under the explicit storage exclusion; no
+universal corruption-detection or exactly-once-transmission claim. Queued/held
+work and unsaved loss counters remain volatile. Remote retention remains deferred.
+**Stop after the Stage 3 local commit. Do not start Stage 4 or publish.**
+
+---
+
+# Historical Stage 2 checkpoint
+
 # Vigil Resilience state — Stage 2 COMPLETE
 
 **Stage 2 PASS — PostgreSQL replay and reconciliation accepted.** One Codex

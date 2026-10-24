@@ -38,8 +38,19 @@ class ReplayPostgres(Postgres):
         return result.stdout.strip()
 
     def dump(self):
-        return {table: json.loads(self.sql(f'SELECT coalesce(json_agg(t),\'[]\') FROM (SELECT * FROM vigil.{table} ORDER BY 1,2) t'))
-                for table in ('runs', 'run_origins', 'history', 'checkpoints', 'replay_receipts')}
+        # One statement snapshot prevents an asynchronous server commit from
+        # producing a mixed before/after inventory across individual tables.
+        tables = ('runs', 'run_origins', 'history', 'checkpoints', 'replay_receipts')
+        fields = ','.join(
+            f"'{table}',(SELECT coalesce(json_agg(t),'[]'::json) FROM "
+            f"(SELECT * FROM vigil.{table} ORDER BY 1,2) t)" for table in tables)
+        try:
+            # Bulk evidence rendering has a separate budget from daemon SQL.
+            # One coherent backlog snapshot can exceed the small-query 2s
+            # fixture default; preserve the subprocess's 20s outer deadline.
+            return json.loads(self.sql('SET statement_timeout=15000; SELECT json_build_object(' + fields + ')'))
+        except subprocess.CalledProcessError as error:
+            raise AssertionError('disposable PG snapshot export: ' + error.stderr) from error
 
 
 def encode(b):

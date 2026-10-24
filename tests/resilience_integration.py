@@ -103,9 +103,15 @@ class Hook:
 
 
 @contextmanager
-def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1, config=None):
+def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1, config=None, startup_timeout=5):
     # Inherit test FDs only for the separate test binary. Reuse all existing
     # monitoring snapshot/accounting oracles without weakening their assertions.
+    # A limits-only override must never fall through to the installed database.
+    selected = dict(hook.env if hook else (env or os.environ))
+    if not hook and (env is None or "VIGIL_DB_HOST" not in env):
+        selected["VIGIL_DB_HOST"] = "/tmp/vigil-test-no-postgres"
+    for key in ("PGSERVICE", "PGSERVICEFILE", "PGHOSTADDR"):
+        selected.pop(key, None)
     original = subprocess.Popen
     def popen(*args, **kwargs):
         if hook:
@@ -116,7 +122,7 @@ def daemon(exe, path, hook=None, env=None, capacity=16, pipesize=-1, config=None
     try:
         d = Daemon(str(exe), config or config_text(pods=(1,), timeout=500, status=100, rate=0),
                    persistence=True, extra_args=("--outbox-path", str(path), "--queue-capacity", str(capacity)),
-                   env=hook.env if hook else (env or dict(os.environ, VIGIL_DB_HOST="/tmp/vigil-test-no-postgres")), pipesize=pipesize)
+                   env=selected, pipesize=pipesize, startup_timeout=startup_timeout)
         yield d
     finally:
         subprocess.Popen = original
@@ -287,7 +293,7 @@ def runtime_fault(exe, init, root, output, command, state):
 def logical_full(exe, init, root, output):
     print("EXPECT: record cap preserves older committed bytes, holds one candidate and evicts only new volatile lane records", flush=True)
     path = create(root, init)
-    env = dict(os.environ, VIGIL_TEST_RECORD_LIMIT="5")
+    env = dict(os.environ, VIGIL_DB_HOST="/tmp/vigil-test-no-postgres", VIGIL_TEST_RECORD_LIMIT="5")
     with daemon(exe, path, env=env, capacity=4) as d, bus() as raw:
         wait_local(d, lambda s: s["pending_batches"] >= 1)
         for n in range(4):
