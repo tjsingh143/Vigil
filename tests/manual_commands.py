@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Record the small candump/cansend checklist exchange (supplements fault assertions)."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 import json
 from pathlib import Path
@@ -16,11 +17,11 @@ def exchange(decoder):
     with process(['candump', '-L', '-n', '3', 'vcan0,101:7FF']) as dump:
         deadline = time.monotonic() + 3
         while True:
-            assert dump.poll() is None, 'candump exited before subscription'
+            require((dump.poll() is None), lambda: ('candump exited before subscription'))
             filters = Path('/proc/net/can/rcvlist_fil').read_text()
             if any(line.split()[:3] == ['vcan0', '101', '000007ff'] for line in filters.splitlines()):
                 break
-            assert time.monotonic() < deadline, filters
+            require((time.monotonic() < deadline), lambda: (filters))
             time.sleep(0.01)
         with process([decoder, '--listen', 'vcan0', '3']) as probe:
             line_ready(probe.stderr)
@@ -32,12 +33,12 @@ def exchange(decoder):
                 commands.append(command)
             decoded, err = probe.communicate(timeout=5)
             observed, dump_err = dump.communicate(timeout=5)
-            assert probe.returncode == 1 and not err, (probe.returncode, err)
-            assert dump.returncode == 0 and not dump_err, dump_err
+            require((probe.returncode == 1 and not err), lambda: ((probe.returncode, err)))
+            require((dump.returncode == 0 and not dump_err), lambda: (dump_err))
             rows = [json.loads(line) for line in decoded.splitlines()]
-            assert [row['result'] for row in rows] == ['ok', 'length', 'crc'], rows
-            assert rows[0]['value'] == 2200
-            assert [line.split()[-1] for line in observed.splitlines()] == [c[-1] for c in commands]
+            require(([row['result'] for row in rows] == ['ok', 'length', 'crc']), lambda: (rows))
+            require((rows[0]['value'] == 2200))
+            require(([line.split()[-1] for line in observed.splitlines()] == [c[-1] for c in commands]))
             print(observed, end='')
             print(decoded, end='')
             return dict(commands=commands, candump=observed, decoder=rows, decoder_exit=probe.returncode)

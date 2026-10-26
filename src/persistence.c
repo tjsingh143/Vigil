@@ -1,6 +1,7 @@
 #include "vigil/persistence.h"
 #include "vigil/outbox.h"
 #include "vigil/replay.h"
+#include "vigil/failpoint.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -114,12 +115,33 @@ static void *writer(void *context)
         if (!latched && state==VIGIL_SLOT_RESULT && now>=retire_retry) {
             if (success) {
                 r=vigil_outbox_retire(o,&slot->batch);
+                if (r==VIGIL_STORE_APPEND_PENDING) {
+                    /* retire() sealed a committed, pinned append without
+                     * mutating the confirmed head. Publish that capture first;
+                     * ordinary retirement failures still block new mutations.
+                     * One bounded reconciliation breaks the dependency cycle,
+                     * including on a quiet bus. Never take a new capture here. */
+                    if (!held) r=VIGIL_STORE_CORRUPT;
+                    else {
+                        struct vigil_local_commit commit;
+                        r=vigil_outbox_append(o,c,&commit);
+                        if (r==VIGIL_STORE_OK) {
+                            publish(p,o,r,c);
+                            held=false;
+                            if (c->recovery) recovery=false;
+                            vigil_test_hook("after_append_recovery_published");
+                            r=vigil_outbox_retire(o,&slot->batch);
+                        }
+                    }
+                }
                 if (r==VIGIL_STORE_OK) {
                     retired(p,o,&slot->batch);
+                    vigil_test_hook("after_retirement_published");
                     recovery=recovery||failed;
                     failed=false;
                 } else {
                     publish(p,o,r,NULL);
+                    vigil_test_hook("after_retirement_failed");
                     retire_retry=now+1000U;
                     latched=r==VIGIL_STORE_CORRUPT || r==VIGIL_STORE_INVALID || r==VIGIL_STORE_EXHAUSTED;
                 }
@@ -149,6 +171,7 @@ static void *writer(void *context)
                 struct vigil_local_commit commit;
                 r=vigil_outbox_append(o,c,&commit);
                 publish(p,o,r,r==VIGIL_STORE_OK?c:NULL);
+                if (r!=VIGIL_STORE_OK) vigil_test_hook("after_append_failed");
                 if (r==VIGIL_STORE_OK) {
                     held=false;
                     if (c->recovery) recovery=false;

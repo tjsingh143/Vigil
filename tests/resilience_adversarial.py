@@ -3,6 +3,7 @@
 No endpoint/store argument: every destructive target is allocated here. Seed
 chooses a boundary combination, not a sleep at which to guess a transaction.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import hashlib
@@ -48,9 +49,9 @@ def cluster():
     pg = ReplayPostgres()
     try:
         # Verify identity using the server itself before stopping or mutating it.
-        assert Path(pg.sql('SHOW data_directory')).resolve() == pg.data.resolve()
-        assert pg.root.name.startswith('vigil-pg-') and pg.root.parent == Path(tempfile.gettempdir())
-        assert pg.sql('SHOW fsync') == pg.sql('SHOW full_page_writes') == 'on'
+        require((Path(pg.sql('SHOW data_directory')).resolve() == pg.data.resolve()))
+        require((pg.root.name.startswith('vigil-pg-') and pg.root.parent == Path(tempfile.gettempdir())))
+        require((pg.sql('SHOW fsync') == pg.sql('SHOW full_page_writes') == 'on'))
         yield pg
     finally:
         pg.close()
@@ -70,18 +71,18 @@ def oracle(pg, inv, known, output):
     for r in dump['replay_receipts']:
         raw = bytes.fromhex(r['payload'][2:]).decode()
         b = json.loads(raw)
-        assert b['origin']['spool_id'] == inv['meta']['spool_id']
-        assert b['order_id'] not in remote
+        require((b['origin']['spool_id'] == inv['meta']['spool_id']))
+        require((b['order_id'] not in remote))
         remote[b['order_id']] = raw
     local = {r['order_id']: r['payload'] for r in inv['rows']}
     for order, raw in known.items():
-        assert local.get(order) == raw or remote.get(order) == raw, ('lost durable order', order)
+        require((local.get(order) == raw or remote.get(order) == raw), lambda: (('lost durable order', order)))
     for order in local.keys() & remote.keys():
-        assert local[order] == remote[order], ('changed retry', order)
+        require((local[order] == remote[order]), lambda: (('changed retry', order)))
     for order in range(1, inv['meta']['last_retired_order'] + 1):
-        assert order in remote, ('retired without receipt', order)
+        require((order in remote), lambda: (('retired without receipt', order)))
     for order, raw in {**remote, **local}.items():
-        assert order not in known or known[order] == raw
+        require((order not in known or known[order] == raw))
         known[order] = raw
     save(output, dict(sqlite=inv, postgres=dump, checked_durable_orders=len(known)))
     return dump
@@ -91,7 +92,7 @@ def stale_age(snapshot):
     alarm=next(e for e in snapshot['rows'] if e['event']=='alarm_status' and
                e['pod']==1 and e['channel']==0 and e['kind']=='communication_lost')
     age=alarm['raised_ms']-source(snapshot,1,0)['last_valid_ms']
-    assert alarm['active']==1 and 500<=age<=720, age
+    require((alarm['active']==1 and 500<=age<=720), lambda: (age))
     return age
 
 
@@ -132,7 +133,7 @@ def schedule(build, native, evidence_dir, seed):
                 with daemon(exe, path, hook, capacity=128) as d, bus() as raw:
                     tokens = [hook.token()]
                     snap = d.wait(lambda s:s['frames']==0)
-                    assert source(snap, 1, 0)['has_value']==0
+                    require((source(snap, 1, 0)['has_value']==0))
                     for n in range(count):
                         send(raw, reading(1, 0, 2800 if n % 2 else 2200, 0, n))
                     d.wait(lambda s:s['valid_readings']==count)
@@ -140,14 +141,14 @@ def schedule(build, native, evidence_dir, seed):
                     tokens.append(hook.token())
                     kill(d)
                     record['cuts'].append(dict(point=local, tokens=tokens, **counters(d)))
-                    assert d.child.returncode == -9
+                    require((d.child.returncode == -9))
             finally:
                 hook.close()
-            assert d.errors.decode().startswith('ready ') and len(d.errors.decode().splitlines())==1, d.errors
+            require((d.errors.decode().startswith('ready ') and len(d.errors.decode().splitlines())==1), lambda: (d.errors))
             after = inventory(path, root/'local-cut')
-            assert all(next(r['payload'] for r in after['rows'] if r['order_id']==k)==v for k,v in known.items())
+            require((all(next(r['payload'] for r in after['rows'] if r['order_id']==k)==v for k,v in known.items())))
             total = sum(e['kind']=='reading' for e in committed_records(after).values())
-            assert total == 4 + (count if local == LOCAL[-1] else 0), total
+            require((total == 4 + (count if local == LOCAL[-1] else 0)), lambda: (total))
             record['actual_assertions'].append('Exact pre/post-local-commit candidate and baseline survival')
             pg.start()
             oracle(pg, after, known, root/'local-union.json')
@@ -165,7 +166,7 @@ def schedule(build, native, evidence_dir, seed):
                     if proxy:
                         wait(d, lambda:proxy.count()==1)
                         token = 'committed_response_withheld:ReadyForQuery'
-                        assert proxy.requests[0] == head['payload'].encode()
+                        require((proxy.requests[0] == head['payload'].encode()))
                     else:
                         token = hook.token()
                     admits_during_pause = remote in REMOTE[:3] or proxy is not None
@@ -176,25 +177,25 @@ def schedule(build, native, evidence_dir, seed):
                         if admits_during_pause:
                             wait_local(d, lambda s:s['local_readings']==extra)
                         s = d.wait(lambda s:s['valid_readings']==extra and source(s,1,0)['freshness']=='stale')
-                        assert source(s,1,0)['current']==0
+                        require((source(s,1,0)['current']==0))
                         record['stale_age_ms']=stale_age(s)
                     # PG observer distinguishes possible send from confirmed server commit.
                     receipt = pg.sql(f"SELECT encode(payload,'hex') FROM vigil.replay_receipts WHERE run_id='{head['run_id']}' AND batch_id={head['batch_id']}")
                     if remote not in REMOTE[:2]:
-                        assert receipt == head['payload'].encode().hex()
+                        require((receipt == head['payload'].encode().hex()))
                     kill(d)
                     record['cuts'].append(dict(point=remote, token=token, head_receipt_before_kill=receipt, **counters(d)))
-                    assert d.child.returncode == -9
+                    require((d.child.returncode == -9))
             finally:
                 if hook: hook.close()
                 if proxy: proxy.close(); proxy = None
-            assert d.errors.decode().startswith('ready ') and len(d.errors.decode().splitlines())==1, d.errors
+            require((d.errors.decode().startswith('ready ') and len(d.errors.decode().splitlines())==1), lambda: (d.errors))
             cut = inventory(path, root/'remote-cut')
             if remote == REMOTE[-1]:
-                assert cut['meta']['last_retired_order']==head['order_id']
+                require((cut['meta']['last_retired_order']==head['order_id']))
             else:
-                assert cut['meta']['last_retired_order']==0
-                assert cut['rows'][0]['payload']==head['payload']
+                require((cut['meta']['last_retired_order']==0))
+                require((cut['rows'][0]['payload']==head['payload']))
             oracle(pg, cut, known, root/'remote-union.json')
             # Proxy schedules exercise one/two/three consecutive lost acknowledgements,
             # preserving the same remote head while each process admits another run.
@@ -203,11 +204,11 @@ def schedule(build, native, evidence_dir, seed):
                 try:
                     with daemon(exe, path, env=proxy.env()) as d:
                         wait(d, lambda:proxy.count()==1)
-                        assert proxy.requests[0] == head['payload'].encode()
+                        require((proxy.requests[0] == head['payload'].encode()))
                         kill(d)
                         record['cuts'].append(dict(point=remote, repeat=repeat, **counters(d)))
                     repeated=inventory(path,root/f'repeated-{repeat}')
-                    assert repeated['meta']['last_retired_order']==0
+                    require((repeated['meta']['last_retired_order']==0))
                     oracle(pg,repeated,known,root/f'repeated-{repeat}-union.json')
                 finally:
                     proxy.close(); proxy=None
@@ -216,13 +217,13 @@ def schedule(build, native, evidence_dir, seed):
             with daemon(exe, path, env=pg.env()) as d:
                 wait_p(d, caught_up, timeout=30)
                 s = d.wait(lambda s:s['frames']==0)
-                assert source(s,1,0)['has_value']==0
+                require((source(s,1,0)['has_value']==0))
                 d.stop()
                 record['cuts'].append(dict(point='final healthy stop', **counters(d)))
             final = inventory(path, root/'finished')
             oracle(pg, final, known, root/'final-union.json')
             exact = assert_remote(pg, final)
-            assert exact['readings']==total+(extra if concurrent and admits_during_pause else 0)
+            require((exact['readings']==total+(extra if concurrent and admits_during_pause else 0)))
             record['actual_assertions'].extend(['All durable orders represented by exact remote receipts',
                 'Full remote history/origin/snapshot/gap equality and zero local pending',
                 'Original order/run identities and fresh-process unknown live state'])
@@ -252,22 +253,22 @@ def server_transaction_kill(build, root, evidence_dir):
             holder.stdin.write("SELECT pg_advisory_lock(762193); SELECT 'locked';\n"); holder.stdin.flush()
             # Bounded read handshake; no sleep guesses the remote transaction.
             import select
-            assert select.select([holder.stdout],[],[],3)[0]
-            while holder.stdout.readline().strip()!='locked': assert holder.poll() is None
+            require((select.select([holder.stdout],[],[],3)[0]))
+            while holder.stdout.readline().strip()!='locked': require((holder.poll() is None))
             with daemon(build/'vigild-resilience-test',path,env=pg.env()) as d:
                 pid=wait(d,lambda:pg.sql("SELECT pid FROM pg_stat_activity WHERE application_name='vigild' AND wait_event='advisory'"))
                 kill(d)
                 observed=counters(d)
                 # Terminate only that backend in this verified disposable server;
                 # force rollback after proving SIGKILL occurred in its transaction.
-                assert pg.sql('SELECT pg_terminate_backend('+pid+')')=='t'
+                require((pg.sql('SELECT pg_terminate_backend('+pid+')')=='t'))
             for table in ('runs','run_origins','history','checkpoints','replay_receipts'):
-                assert pg.sql('SELECT count(*) FROM vigil.'+table)=='0'
+                require((pg.sql('SELECT count(*) FROM vigil.'+table)=='0'))
         finally:
             holder.communicate('SELECT pg_advisory_unlock(762193);\n',timeout=3)
         pg.sql('DROP TRIGGER test_stage3_pause ON vigil.checkpoints; DROP FUNCTION vigil.test_stage3_pause()')
         cut=inventory(path,root/'killed')
-        assert cut['meta']['last_retired_order']==0
+        require((cut['meta']['last_retired_order']==0))
         oracle(pg,cut,known,root/'killed-union.json')
         with daemon(build/'vigild-resilience-test',path,env=pg.env()) as d:
             wait_p(d,caught_up,timeout=20); d.stop()
@@ -318,14 +319,14 @@ def backlog(build, root, evidence_dir):
                 admission.release(b'D')
                 local = wait_local(d, lambda s:s['local_readings']==6000, timeout=15)
                 pending = wait_p(d, lambda s:s['readings_queued']==6000)
-                assert pending['readings_dropped']==pending['events_dropped']==0
-                assert local['durable_pending']>=6000 and local['spool_retired']==0
+                require((pending['readings_dropped']==pending['events_dropped']==0))
+                require((local['durable_pending']>=6000 and local['spool_retired']==0))
                 d.stop()
                 offline = counters(d)
         finally:
             admission.close()
         inv = inventory(path, root/'backlog')
-        assert inv['meta']['admitted_readings']==6000
+        require((inv['meta']['admitted_readings']==6000))
         known={r['order_id']:r['payload'] for r in inv['rows']}
         pg.start()
         hook=Hook('before_remote_send',hit=1); hook.env.update(pg.env())
@@ -337,23 +338,23 @@ def backlog(build, root, evidence_dir):
                 for n in range(128): send(raw,reading(1,0,2800,0,n)); d.pump(.002)
                 wait_local(d,lambda s:s['local_readings']==128)
                 s=d.wait(lambda s:s['valid_readings']==128 and source(s,1,0)['freshness']=='stale')
-                assert source(s,1,0)['high']==1
+                require((source(s,1,0)['high']==1))
                 age_ms=stale_age(s)
                 samples.append(resources(d,path))
                 drain_start=time.monotonic(); hook.release()
                 done=wait_p(d,lambda s:caught_up(s) and s['readings_written']==128,timeout=120)
                 drain=time.monotonic()-drain_start
-                assert done['readings_dropped']==done['events_dropped']==0
+                require((done['readings_dropped']==done['events_dropped']==0))
                 samples.append(resources(d,path)); d.stop(); final_counters=counters(d)
         finally: hook.close()
         final=inventory(path,root/'finished')
         oracle(pg,final,known,root/'union.json')
         result=assert_remote(pg,final,inv['rows'])
-        assert result['readings']==6128
+        require((result['readings']==6128))
         for sample in samples:
-            assert sample['files']['db']<=512*1024**2
-            assert sample['files'].get('-wal',0)<520*1024**2
-            assert sample['files'].get('-shm',0)<=2*1024**2
+            require((sample['files']['db']<=512*1024**2))
+            require((sample['files'].get('-wal',0)<520*1024**2))
+            require((sample['files'].get('-shm',0)<=2*1024**2))
         save(evidence_dir/'run.json',dict(samples=samples,offline=offline,final=final_counters,admission_tokens=admission_tokens,
              sqlite=final,postgres=result['remote'],token=token,drain_s=drain,startup_s=startup_s,stale_age_ms=age_ms,exit_status=0))
         return dict(offered=6000,new_during_replay=128,remote_readings=6128,
@@ -371,9 +372,9 @@ def damaged_copies(build, root, evidence_dir):
         shutil.copy2(Path(str(path)+suffix),template/('outbox.sqlite3'+suffix))
     wal=(template/'outbox.sqlite3-wal').read_bytes()
     page=struct.unpack('>I',wal[8:12])[0]; frame=24+page
-    assert len(wal)>32 and (len(wal)-32)%frame==0
+    require((len(wal)>32 and (len(wal)-32)%frame==0))
     commits=[i for i in range((len(wal)-32)//frame) if struct.unpack('>I',wal[32+i*frame+4:40+i*frame])[0]]
-    assert len(commits)>=3
+    require((len(commits)>=3))
     results={}
     for mode in ('bad-header','db-truncated','partial-uncommitted-tail','wal-truncated-commit','wal-bad-commit-checksum'):
         case=root/mode; case.mkdir(mode=0o700)
@@ -402,16 +403,16 @@ def damaged_copies(build, root, evidence_dir):
         if mode in ('bad-header','db-truncated'):
             child=subprocess.run([str(build/'vigild'),'--outbox-path',str(db)],capture_output=True,timeout=5,
                                  env=dict(os.environ,VIGIL_DB_HOST='/tmp/vigil-test-no-postgres'))
-            assert child.returncode==2 and b'ready ' not in child.stderr
-            assert hashlib.sha256(db.read_bytes()).hexdigest()==before
+            require((child.returncode==2 and b'ready ' not in child.stderr))
+            require((hashlib.sha256(db.read_bytes()).hexdigest()==before))
             (evidence_dir/(mode+'.stderr')).write_bytes(child.stderr)
             results[mode]=dict(expected=expected,exit_status=2,preserved_db_sha256=before)
         else:
             recovered=inventory(db,root/(mode+'-recovered'))
-            if mode=='partial-uncommitted-tail': assert recovered['rows']==original['rows']
+            if mode=='partial-uncommitted-tail': require((recovered['rows']==original['rows']))
             else:
-                assert recovered['rows']==original['rows'][:-1]
-                assert recovered['meta']['admitted_readings']==0
+                require((recovered['rows']==original['rows'][:-1]))
+                require((recovered['meta']['admitted_readings']==0))
             with daemon(build/'vigild',db) as d:
                 wait_local(d,lambda s:s['pending_batches']>=len(recovered['rows'])); d.stop()
             results[mode]=dict(expected=expected,retained_orders=[r['order_id'] for r in recovered['rows']],exit_status=0)
@@ -426,17 +427,17 @@ def main():
     ap.add_argument('--seed',type=int,action='append',help='repeat to select exact schedules (0..59); default all 60')
     ap.add_argument('--extras-only',action='store_true')
     args=ap.parse_args()
-    assert sys.platform=='linux' and not sys.flags.optimize
-    assert not (args.extras_only and args.seed)
+    require((sys.platform=='linux' and not sys.flags.optimize))
+    require((not (args.extras_only and args.seed)))
     seeds=args.seed if args.seed is not None else list(range(60))
-    assert len(set(seeds))==len(seeds) and all(0<=s<60 for s in seeds)
+    require((len(set(seeds))==len(seeds) and all(0<=s<60 for s in seeds)))
     # Do not inherit libpq service, credential, options or test-control routing.
     for k in list(os.environ):
         if k.startswith(('PG','VIGIL_DB_','VIGIL_TEST_')): os.environ.pop(k)
     build=args.build.resolve()
     native=Path(tempfile.mkdtemp(prefix='vigil-stage3-evidence-'))
     symbols=subprocess.check_output(['nm',str(build/'vigild')],text=True)
-    assert 'vigil_test_' not in symbols
+    require(('vigil_test_' not in symbols))
     evidence=Evidence(args.output)
     evidence.report.update(native_evidence=str(native),seeds=[] if args.extras_only else seeds,
         binary_sha256=hashlib.sha256((build/'vigild-resilience-test').read_bytes()).hexdigest())

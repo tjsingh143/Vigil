@@ -5,6 +5,7 @@ Expected: can-utils exchange a literal frame; two simulator pods produce exactly
 18 consistent frames; malformed traffic fails by reason; SIGINT/SIGTERM promptly
 stop the simulator. Both C build variants run this same gate.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 
 import argparse
 from contextlib import contextmanager
@@ -42,16 +43,16 @@ def process(args):
 
 
 def line_ready(stream, timeout=5):
-    assert select.select([stream], [], [], timeout)[0], "readiness timeout"
+    require((select.select([stream], [], [], timeout)[0]), lambda: ("readiness timeout"))
     line = stream.readline()
-    assert line.startswith("ready "), line
+    require((line.startswith("ready ")), lambda: (line))
 
 
 def receive(raw):
     frame = raw.recv(16)
-    assert len(frame) == 16
+    require((len(frame) == 16))
     can_id, length, data = struct.unpack("=IB3x8s", frame)
-    assert length <= 8
+    require((length <= 8))
     return can_id, data[:length]
 
 
@@ -61,11 +62,11 @@ def can_utils_proof():
         # independent subscription observes it, rather than assume a sleep works.
         deadline = time.monotonic() + 3
         while not select.select([dump.stdout], [], [], 0.02)[0]:
-            assert time.monotonic() < deadline, "candump subscription timeout"
+            require((time.monotonic() < deadline), lambda: ("candump subscription timeout"))
             subprocess.run(["cansend", "vcan0", "123#11223344"], check=True)
         stdout, stderr = dump.communicate(timeout=2)
-        assert dump.returncode == 0, stderr
-        assert "123#11223344" in stdout, stdout
+        require((dump.returncode == 0), lambda: (stderr))
+        require(("123#11223344" in stdout), lambda: (stdout))
         print("PASS can-utils independent observation:", stdout.strip())
 
 
@@ -79,40 +80,40 @@ def simulator_proof(decoder):
                                   "--pod-id", "1", "--pod-id", "2",
                                   "--interval", "0.02", "--cycles", "3"],
                                  capture_output=True, text=True, timeout=5, cwd=ROOT)
-            assert sim.returncode == 0, sim.stderr
-            assert "stopped cycles=3" in sim.stdout
+            require((sim.returncode == 0), lambda: (sim.stderr))
+            require(("stopped cycles=3" in sim.stdout))
             frames = [receive(raw) for _ in range(18)]
             stdout, stderr = reader.communicate(timeout=5)
-            assert reader.returncode == 0, (stdout, stderr)
+            require((reader.returncode == 0), lambda: ((stdout, stderr)))
             decoded = [json.loads(line) for line in stdout.splitlines()]
-            assert len(decoded) == 18
+            require((len(decoded) == 18))
             for index, ((can_id, data), message) in enumerate(zip(frames, decoded)):
                 tick, slot = divmod(index, 6)
                 pod = slot // 3 + 1
                 kind = slot % 3
-                assert message["result"] == "ok"
-                assert message["pod"] == pod
-                assert data[-1] == crc8(data[:-1])
+                require((message["result"] == "ok"))
+                require((message["pod"] == pod))
+                require((data[-1] == crc8(data[:-1])))
                 if kind < 2:
-                    assert can_id == 0x100 + pod and len(data) == 6
+                    require((can_id == 0x100 + pod and len(data) == 6))
                     channel, value, status, counter = struct.unpack("<BhBB", data[:-1])
-                    assert channel == kind and status == 0
-                    assert value == (2200 + tick if kind == 0 else 0)
-                    assert counter == tick * 2 + kind
-                    assert message == dict(result="ok", kind=1, pod=pod,
+                    require((channel == kind and status == 0))
+                    require((value == (2200 + tick if kind == 0 else 0)))
+                    require((counter == tick * 2 + kind))
+                    require((message == dict(result="ok", kind=1, pod=pod,
                                            channel=channel, value=value, status=0,
-                                           counter=counter, state=0, uptime_s=0)
+                                           counter=counter, state=0, uptime_s=0)))
                 else:
-                    assert can_id == 0x700 + pod and len(data) == 7
+                    require((can_id == 0x700 + pod and len(data) == 7))
                     state, uptime, counter = struct.unpack("<BIB", data[:-1])
-                    assert state == 1 and counter == tick and uptime <= 4
-                    assert message == dict(result="ok", kind=2, pod=pod,
+                    require((state == 1 and counter == tick and uptime <= 4))
+                    require((message == dict(result="ok", kind=2, pod=pod,
                                            channel=0, value=0, status=0,
-                                           counter=counter, state=1, uptime_s=uptime)
+                                           counter=counter, state=1, uptime_s=uptime)))
                 if index < 6:
                     print(f"  observed {can_id:03X}#{data.hex().upper()} -> {message}")
             # The finite simulator must not send an extra cycle.
-            assert not select.select([raw], [], [], 0.05)[0]
+            require((not select.select([raw], [], [], 0.05)[0]))
     print("PASS simulator -> real vcan0 -> independent receiver AND C decoder: 18 frames")
 
 
@@ -133,9 +134,9 @@ def malformed_proof(decoder):
             for can_id, data, _ in cases:
                 raw.sendall(struct.pack("=IB3x8s", can_id, len(data), data))
             stdout, stderr = reader.communicate(timeout=5)
-            assert reader.returncode == 1, (stdout, stderr)
+            require((reader.returncode == 1), lambda: ((stdout, stderr)))
             actual = [json.loads(line)["result"] for line in stdout.splitlines()]
-            assert actual == [case[2] for case in cases], actual
+            require((actual == [case[2] for case in cases]), lambda: (actual))
     print("PASS malformed live traffic: length, CRC, ID, EFF, RTR, channel, status")
 
 
@@ -145,8 +146,8 @@ def shutdown_proof():
             line_ready(sim.stdout)
             sim.send_signal(stop_signal)
             stdout, stderr = sim.communicate(timeout=2)
-            assert sim.returncode == 0, (stdout, stderr)
-            assert "stopped cycles=" in stdout
+            require((sim.returncode == 0), lambda: ((stdout, stderr)))
+            require(("stopped cycles=" in stdout))
     print("PASS simulator SIGINT and SIGTERM shutdown within 2-second deadline")
 
 
@@ -154,28 +155,28 @@ def cli_proof(decoder):
     guard = subprocess.run([sys.executable, "-O", str(Path(__file__).resolve()),
                             "--decoder", decoder], capture_output=True,
                            text=True, timeout=3)
-    assert guard.returncode != 0 and "assertions must remain enabled" in guard.stderr
-    assert not guard.stdout
+    require((guard.returncode != 0 and "assertions must remain enabled" in guard.stderr))
+    require((not guard.stdout))
     for line in (ROOT / "tests/protocol_vectors.txt").read_text().splitlines():
         if line.startswith("#"):
             continue
         can_id, payload, *_ = line.split()
         result = subprocess.run([decoder, can_id, payload], capture_output=True,
                                 text=True, timeout=3)
-        assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout)["result"] == "ok"
+        require((result.returncode == 0), lambda: (result.stderr))
+        require((json.loads(result.stdout)["result"] == "ok"))
     for args in [("101", "zz"), ("101", "0"), ("-1", "00"),
                  ("\t101", "00"), ("", "00"),
                  ("100000000", "00"), ("101", "00" * 9),
                  ("--listen", "vcan0", "0"), ("--listen", "absent0", "1")]:
         result = subprocess.run([decoder, *args], capture_output=True, timeout=3)
-        assert result.returncode == 2, (args, result.stderr)
+        require((result.returncode == 2), lambda: ((args, result.stderr)))
     for args in [("--interval", "nan"), ("--interval", "inf"),
                  ("--interval", "0"), ("--pod-id", "0"),
                  ("--pod-id", "1", "--pod-id", "1"), ("--cycles", "-1")]:
         result = subprocess.run([sys.executable, "-m", "simulator.pod", *args],
                                 capture_output=True, timeout=3, cwd=ROOT)
-        assert result.returncode == 2, (args, result.stderr)
+        require((result.returncode == 2), lambda: ((args, result.stderr)))
     print("PASS literal CLI vectors and invalid decoder/simulator arguments")
 
 

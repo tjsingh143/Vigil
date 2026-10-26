@@ -2,6 +2,7 @@
 """Disposable loop-mounted ext4 ENOSPC/read-only tests, plus hardened systemd.
 No installed database or default Vigil unit is modified.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import errno
@@ -19,7 +20,7 @@ from simulator.protocol import reading
 
 def run(args, **kwargs):
     r = subprocess.run(args, text=True, capture_output=True, timeout=30, **kwargs)
-    assert r.returncode == 0, (args, r.stdout, r.stderr)
+    require((r.returncode == 0), lambda: ((args, r.stdout, r.stderr)))
     return r
 
 
@@ -69,17 +70,17 @@ def physical(build, output, readonly):
                                 f.write(chunk)
                                 d.pump(0)
                         except OSError as e:
-                            assert e.errno == errno.ENOSPC
-                    assert os.statvfs(mount).f_bavail < 256
+                            require((e.errno == errno.ENOSPC))
+                    require((os.statvfs(mount).f_bavail < 256))
                 hook.release()
                 failed = wait_local(d, lambda s: s["local_state"] in ("full", "readonly", "recovering"))
-                assert failed["local_committed"] == initial["local_committed"]
+                require((failed["local_committed"] == initial["local_committed"]))
                 stale = d.wait(lambda s: s["valid_readings"] == 1 and source(s, 1, 0)["freshness"] == "stale")
-                assert source(stale, 1, 0)["high"] == 1
+                require((source(stale, 1, 0)["high"] == 1))
                 start = time.monotonic()
                 d.stop()
                 elapsed = time.monotonic() - start
-                assert elapsed < 1.25, elapsed
+                require((elapsed < 1.25), lambda: (elapsed))
             if readonly:
                 run(["sudo", "mount", "-o", "remount,rw", str(mount)])
             else:
@@ -89,9 +90,9 @@ def physical(build, output, readonly):
             # An ENOSPC attempt publishes none (asserted above). A later
             # checkpoint can reuse already allocated DB/WAL pages, so another
             # whole transaction may legitimately commit before shutdown.
-            assert inv["meta"]["pending_records"] == final["local_committed"]
-            assert inv["meta"]["pending_records"] >= initial["durable_pending"]
-            assert inv["meta"]["admitted_readings"] <= 1
+            require((inv["meta"]["pending_records"] == final["local_committed"]))
+            require((inv["meta"]["pending_records"] >= initial["durable_pending"]))
+            require((inv["meta"]["admitted_readings"] <= 1))
             with daemon(build / "vigild", path) as restarted:
                 wait_local(restarted, lambda s: s["durable_pending"] >= initial["durable_pending"])
                 restarted.stop()
@@ -113,10 +114,10 @@ def readonly_startup(build, output):
         before = inventory(path, output / "readonly-before")
         run(["sudo", "mount", "-o", "remount,ro", str(mount)])
         rejected = subprocess.run([str(build / "vigild"), "--outbox-path", str(path)], capture_output=True, timeout=5)
-        assert rejected.returncode == 2 and b"ready " not in rejected.stderr
+        require((rejected.returncode == 2 and b"ready " not in rejected.stderr))
         run(["sudo", "mount", "-o", "remount,rw", str(mount)])
         after = inventory(path, output / "readonly-after")
-        assert before["rows"] == after["rows"]
+        require((before["rows"] == after["rows"]))
         with daemon(build / "vigild", path) as d:
             wait_local(d, lambda s: s["durable_pending"] >= before["meta"]["pending_records"])
             d.stop()
@@ -147,9 +148,9 @@ def systemd(build, output):
         def property_(key):
             return run(["systemctl", "show", unit, "--property=" + key, "--value"]).stdout.strip()
         pid = int(property_("MainPID"))
-        assert pid > 0 and property_("ActiveState") == "active"
+        require((pid > 0 and property_("ActiveState") == "active"))
         status = Path(f"/proc/{pid}/status").read_text()
-        assert f"Uid:\t{os.getuid()}\t" in status and "CapEff:\t0000000000000000" in status
+        require((f"Uid:\t{os.getuid()}\t" in status and "CapEff:\t0000000000000000" in status))
         with bus() as raw:
             for n in range(8):
                 send(raw, reading(1, 0, 2200, 0, n))
@@ -173,7 +174,7 @@ def systemd(build, output):
             if newpid > 0 and newpid != pid and property_("ActiveState") == "active":
                 break
             time.sleep(0.05)
-        assert newpid > 0 and newpid != pid
+        require((newpid > 0 and newpid != pid))
         run(["sudo", "systemctl", "kill", "--kill-who=main", "--signal=SIGSTOP", unit])
         end = time.monotonic() + 10
         watchdog_pid = newpid
@@ -182,13 +183,13 @@ def systemd(build, output):
             if watchdog_pid > 0 and watchdog_pid != newpid and property_("ActiveState") == "active":
                 break
             time.sleep(0.05)
-        assert watchdog_pid > 0 and watchdog_pid != newpid
-        assert int(property_("NRestarts")) >= 2
-        assert "watchdog" in run(["journalctl", "-u", unit, "--no-pager", "-o", "cat"]).stdout.lower()
+        require((watchdog_pid > 0 and watchdog_pid != newpid))
+        require((int(property_("NRestarts")) >= 2))
+        require(("watchdog" in run(["journalctl", "-u", unit, "--no-pager", "-o", "cat"]).stdout.lower()))
         run(["sudo", "systemctl", "stop", unit])
         after = inventory(path, output / "systemd-after")
         rows = {r["order_id"]: r["payload"] for r in after["rows"]}
-        assert all(rows[r["order_id"]] == r["payload"] for r in before["rows"])
+        require((all(rows[r["order_id"]] == r["payload"] for r in before["rows"])))
         (output / "systemd-journal.txt").write_text(run(["journalctl", "-u", unit, "--no-pager", "-o", "cat"]).stdout)
         return dict(uid=os.getuid(), old_pid=pid, new_pid=newpid, watchdog_pid=watchdog_pid, preserved_records=before["meta"]["pending_records"])
     finally:

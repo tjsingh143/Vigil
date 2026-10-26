@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Executable brief scenario table. Genuine SocketCAN/PostgreSQL/systemd required."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import json
@@ -39,7 +40,7 @@ def silent(executable):
             for frame in pod.cycle(tick, 0):
                 send(raw, frame)
         healthy = d.wait(lambda s: s["frames"] == 9)
-        assert all(source(healthy, 1, c)["current"] for c in (0, 1))
+        require((all(source(healthy, 1, c)["current"] for c in (0, 1))))
         stale = d.wait(lambda s: s["now_ms"] > healthy["now_ms"] and s["stale_events"] == 3)
         measured = []
         for channel in (-1, 0, 1):
@@ -48,19 +49,19 @@ def silent(executable):
             event = next(e for e in alarm_events(d, "communication_lost", channel)
                          if e["state"] == "active")
             age = event["now_ms"] - last
-            assert 500 <= age <= 720, age  # tick 20 ms + explicitly bounded VM allowance
+            require((500 <= age <= 720), lambda: (age))  # tick 20 ms + explicitly bounded VM allowance
             measured.append(dict(channel=channel, last_valid_ms=last,
                                  alarm_ms=event["now_ms"], detection_age_ms=age))
             if channel >= 0:
                 row = source(stale, 1, channel)
-                assert row["current"] == 0 and row["freshness"] == "stale"
-                assert row["value"] == source(healthy, 1, channel)["value"]
+                require((row["current"] == 0 and row["freshness"] == "stale"))
+                require((row["value"] == source(healthy, 1, channel)["value"]))
         # Restarted counters after actual stream silence must recover.
         for frame in Pod(1).cycle(0, 0):
             send(raw, frame)
         recovered = d.wait(lambda s: s["frames"] == 12 and s["recoveries"] == 3)
-        assert all(source(recovered, 1, c)["current"] for c in (0, 1))
-        assert recovered["counter_resets"] == 2 and recovered["rejected"] == 0
+        require((all(source(recovered, 1, c)["current"] for c in (0, 1))))
+        require((recovered["counter_resets"] == 2 and recovered["rejected"] == 0))
         d.stop()
         return dict(timeout_ms=500, tick_ms=20, scheduling_allowance_ms=200,
                     sources=measured, recoveries=3, recovery_snapshot_ms=recovered["now_ms"])
@@ -73,11 +74,11 @@ def malformed(executable):
         send(raw, (0x101, b"\0"))
         send(raw, (0x101, bytes.fromhex("0098080000b6")))
         after = d.wait(lambda s: s["frames"] == 3)
-        assert after["rejected"] == 2 and after["valid_readings"] == 1
-        assert rejection(after, "length") == rejection(after, "crc") == 1
-        assert after["alarm_transitions"] == before["alarm_transitions"] == 1
+        require((after["rejected"] == 2 and after["valid_readings"] == 1))
+        require((rejection(after, "length") == rejection(after, "crc") == 1))
+        require((after["alarm_transitions"] == before["alarm_transitions"] == 1))
         for field in ("value", "current", "high", "last_valid_ms", "accepted", "validity"):
-            assert source(after, 1, 0)[field] == source(before, 1, 0)[field]
+            require((source(after, 1, 0)[field] == source(before, 1, 0)[field]))
         d.stop()
         return dict(frames=3, rejected=2, length=1, crc=1, alarm_transitions=1,
                     before_ms=before["now_ms"], after_ms=after["now_ms"])
@@ -90,11 +91,11 @@ def nonadvancing(executable):
         for counter in (10, 9, 138):
             send(raw, reading(1, 0, 2800, 0, counter))
         after = d.wait(lambda s: s["frames"] == 4)
-        assert after["valid_readings"] == 1 and after["rejected"] == 3
-        assert rejection(after, "repeat") == 1 and rejection(after, "old") == 2
-        assert source(after, 1, 0)["value"] == 2200 and source(after, 1, 0)["high"] == 0
-        assert source(after, 1, 0)["last_valid_ms"] == source(before, 1, 0)["last_valid_ms"]
-        assert progress(after, 1, -2)["counter"] == 10
+        require((after["valid_readings"] == 1 and after["rejected"] == 3))
+        require((rejection(after, "repeat") == 1 and rejection(after, "old") == 2))
+        require((source(after, 1, 0)["value"] == 2200 and source(after, 1, 0)["high"] == 0))
+        require((source(after, 1, 0)["last_valid_ms"] == source(before, 1, 0)["last_valid_ms"]))
+        require((progress(after, 1, -2)["counter"] == 10))
         d.stop()
         return dict(repeat=1, old_or_ambiguous=2, accepted=1, baseline_counter=10,
                     observed_ms=after["now_ms"])
@@ -105,9 +106,9 @@ def jump(executable):
         send(raw, reading(1, 0, 2200, 0, 10))
         send(raw, reading(1, 0, 2400, 0, 14))
         snap = d.wait(lambda s: s["frames"] == 2)
-        assert snap["loss"] == 3 and snap["valid_readings"] == 2 and snap["rejected"] == 0
-        assert source(snap, 1, 0)["value"] == 2400 and source(snap, 1, 0)["current"] == 1
-        assert progress(snap, 1, -2)["counter"] == 14
+        require((snap["loss"] == 3 and snap["valid_readings"] == 2 and snap["rejected"] == 0))
+        require((source(snap, 1, 0)["value"] == 2400 and source(snap, 1, 0)["current"] == 1))
+        require((progress(snap, 1, -2)["counter"] == 14))
         d.stop()
         return dict(previous=10, counter=14, inferred_loss=3, accepted=2,
                     value=2400, observed_ms=snap["now_ms"])
@@ -120,8 +121,8 @@ def hysteresis(executable):
             send(raw, reading(1, 0, value, 0, counter))
         snap = d.wait(lambda s: s["frames"] == len(values))
         transitions = alarm_events(d, "high")
-        assert [e["state"] for e in transitions] == ["active", "cleared"]
-        assert source(snap, 1, 0)["high"] == 0 and snap["rejected"] == 0
+        require(([e["state"] for e in transitions] == ["active", "cleared"]))
+        require((source(snap, 1, 0)["high"] == 0 and snap["rejected"] == 0))
         d.stop()
         return dict(values=list(values), raise_at=2700, clear_at=2600, transitions=transitions)
 
@@ -140,12 +141,12 @@ def load(executable, forced=False, count=50000):
             d.child.send_signal(signal.SIGSTOP)
             deadline = time.monotonic() + 2
             while "State:\tT" not in Path(f"/proc/{d.child.pid}/status").read_text():
-                assert time.monotonic() < deadline, "SIGSTOP deadline"
+                require((time.monotonic() < deadline), lambda: ("SIGSTOP deadline"))
                 time.sleep(0.005)
         start = time.monotonic_ns()
         try:
             for index in range(count):
-                assert raw.send(frames[index % 256]) == 16
+                require((raw.send(frames[index % 256]) == 16))
                 if not forced and index % 128 == 0:
                     d.pump(0)
         finally:
@@ -159,10 +160,10 @@ def load(executable, forced=False, count=50000):
         send(raw, heartbeat(1, 1, 0, 0))
         done = d.wait(lambda s: s["heartbeats"] == 1 and
                       s["frames"] + s["rx_overflow"] == count + 1)
-        assert done["frames"] == done["valid_readings"] + done["heartbeats"] + done["rejected"]
-        assert done["diagnostics_dropped"] == 0
+        require((done["frames"] == done["valid_readings"] + done["heartbeats"] + done["rejected"]))
+        require((done["diagnostics_dropped"] == 0))
         if forced:
-            assert done["rx_overflow"] > 0
+            require((done["rx_overflow"] > 0))
         d.stop()
         return dict(sent=count + 1, received=done["frames"], kernel_drops=done["rx_overflow"],
                     accepted_readings=done["valid_readings"], rejected=done["rejected"],

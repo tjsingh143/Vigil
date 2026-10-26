@@ -180,3 +180,24 @@ RSS/file observations are finite samples, not proof of every resource bound.
 This fault stage does not provide enqueue-to-commit/retire latency percentiles,
 SQLite heap instrumentation or queue-lock timing. Those performance measurements
 remain unverified. Remote history/receipts still have no automatic retention.
+
+## Independent audit overlap regressions (2026-10-25)
+
+Earlier successful gates did not cover the coordinator dependency between a
+confirmed old replay and an uncertain new append. The independent audit exposed
+that livelock and stale usage after postcommit retirement NOMEM. Preserve the
+historical evidence above; it does not qualify the rejected candidate against
+these new cases. The [remediation report](RESILIENCE_REMEDIATION.md) records the
+unmodified C counterexamples and new production-coordinator negative controls.
+
+`tests/resilience_remediation.py --build BUILD --output FRESH_DIRECTORY` runs
+30 deterministic scenarios on disposable real SQLite/PG and vcan, including
+16 reconciliation SIGKILL cuts. Independent indexed pipes hold both workers at
+actual production boundaries; a successful PG result is explicitly published
+before storage resumes. Eight overlap cases and six retirement-NOMEM cases
+require quiet same-PID progress. Tests compare consistent DB/WAL copies, exact
+payloads, real PG receipts/history and all published counter pairs. One-shot
+API wrappers simulate usage-query NOMEM at prepare, first step and completion;
+these are targeted failures, not exhaustive heap-exhaustion proof. Dispatcher,
+wrappers and controls are excluded from the production binary. The clean gate
+runs the new scenarios in Debug, Release, ASan/UBSan and TSan builds.

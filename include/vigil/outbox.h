@@ -15,7 +15,10 @@ enum vigil_store_result {
     VIGIL_STORE_INVALID,
     VIGIL_STORE_NOMEM,
     VIGIL_STORE_EXHAUSTED,
-    VIGIL_STORE_READONLY
+    VIGIL_STORE_READONLY,
+    /* Retirement has not mutated its head. Publish the pinned recovered
+     * append through append() before retrying this same confirmed result. */
+    VIGIL_STORE_APPEND_PENDING
 };
 struct vigil_capture {
     struct vigil_record records[VIGIL_BATCH_SIZE], alarms[VIGIL_ALARM_CAPACITY];

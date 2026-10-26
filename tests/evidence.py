@@ -1,4 +1,5 @@
 """Small evidence recorder: expectations first, observed results, failure tracebacks."""
+from verification import require  # also refuses optimized execution before fixture imports
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -36,7 +37,7 @@ class Evidence:
         self.directory.mkdir(parents=True, exist_ok=False)
         self.old_env = os.environ.get("VIGIL_EVIDENCE_DIR")
         self.report = dict(started_utc=utc(), command=sys.argv, platform=platform.platform(),
-                           python=sys.version, commit=subprocess.check_output(
+                           python=sys.version, python_optimize=sys.flags.optimize, commit=subprocess.check_output(
                                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                            git_status=subprocess.check_output(
                                ["git", "status", "--porcelain"], cwd=ROOT, text=True),

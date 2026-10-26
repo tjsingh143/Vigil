@@ -511,3 +511,17 @@ current-run acknowledgement counters. Remote failure/backoff still permits
 independent local admission; this pause is specifically a local-storage fault.
 Every failed retirement COMMIT/sync forces recovery sealing before prefix-based
 acknowledgement, even when the original error was FULL/BUSY rather than IOERR.
+
+## Independent audit remediation amendment (2026-10-25)
+
+The Stage 2 retirement freeze above has one necessary ordering exception.
+When uncertain-append recovery finds the exact held candidate already committed,
+retirement returns APPEND_PENDING before mutating its confirmed head. The storage
+owner publishes that candidate through append reconciliation, then retries the
+same successful replay result. No new capture is taken and normal retirement
+failures still freeze mutation. Clearing the append's pending marker is the
+monotonic progress step; it prevents the prior BUSY dependency cycle on a quiet
+bus. Retirement success also requires fresh complete usage, even when a prefix
+proves that an earlier attempt committed. A failed reload leaves cached usage
+unchanged and the result pinned. See [RESILIENCE_REMEDIATION.md](RESILIENCE_REMEDIATION.md)
+for the full progress argument, original counterexamples and Linux evidence.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Final boundary/lifecycle checks; expectations precede each real Linux run."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 import json
 import os
@@ -30,27 +31,27 @@ def rapid_restart(exe):
                 # to turn old/repeated counters into new measurements.
                 cycle(2500, 0, state=0)
                 rejected = d.wait(lambda s: s["frames"] == 6 + index * 6)
-                assert rejected["rejected"] == (index + 1) * 3
-                assert rejected["counter_resets"] == index * 2
+                require((rejected["rejected"] == (index + 1) * 3))
+                require((rejected["counter_resets"] == index * 2))
                 for channel in (0, 1):
                     for field in ("value", "last_valid_ms", "accepted", "high"):
-                        assert source(rejected, 1, channel)[field] == source(healthy, 1, channel)[field]
+                        require((source(rejected, 1, channel)[field] == source(healthy, 1, channel)[field]))
                 last_traffic = max(progress(rejected, 1, c)["last_seen_ms"] for c in (-1, -2))
                 stale = d.wait(lambda s: s["now_ms"] >= last_traffic + 500 and
                                s["stale_events"] == (index + 1) * 3)
-                assert all(source(stale, 1, c)["current"] == 0 for c in (0, 1))
+                require((all(source(stale, 1, c)["current"] == 0 for c in (0, 1))))
                 event = next(e for e in d.events if e["event"] == "alarm" and e["pod"] == 1
                              and e["channel"] == 0 and e["kind"] == "communication_lost"
                              and e["state"] == "active" and e["now_ms"] > healthy["now_ms"])
                 age = event["now_ms"] - source(healthy, 1, 0)["last_valid_ms"]
-                assert 500 <= age <= 720, age
+                require((500 <= age <= 720), lambda: (age))
                 ages.append(age)
                 cycle(2500 if index % 2 == 0 else 2800, index % 2)
                 healthy = d.wait(lambda s: s["frames"] == 9 + index * 6 and
                                  s["recoveries"] == (index + 1) * 3)
-                assert healthy["counter_resets"] == (index + 1) * 2
-                assert all(source(healthy, 1, c)["current"] for c in (0, 1))
-                assert source(healthy, 1, 0)["high"] == index % 2
+                require((healthy["counter_resets"] == (index + 1) * 2))
+                require((all(source(healthy, 1, c)["current"] for c in (0, 1))))
+                require((source(healthy, 1, 0)["high"] == index % 2))
             d.stop()
             return dict(cycles=6, rejected=18, stream_resets=12, recoveries=18,
                         detection_ages_ms=ages)
@@ -72,7 +73,7 @@ def repeated_outages(exe, pg):
             failed = wait_p(d, lambda s: not s["connected"] and
                             s["connection_failures"] > previous["connection_failures"] and
                             s["in_flight_readings"] == 0 and s["degraded"])
-            assert failed["last_error"] == "08001", failed
+            require((failed["last_error"] == "08001"), lambda: (failed))
             base = 2800 if index == 1 else 2400
             values = [base + i for i in range(count)]
             sent_ms = time.monotonic_ns() // 1000000
@@ -82,32 +83,32 @@ def repeated_outages(exe, pg):
             queued += count
             dropped += max(0, count - 4)
             full = wait_p(d, lambda s: s["readings_queued"] == queued)
-            assert full["reading_depth"] == min(count, 4) and full["readings_dropped"] == dropped
+            require((full["reading_depth"] == min(count, 4) and full["readings_dropped"] == dropped))
             if count > 4:
                 loss_bounds = (sent_ms, full["now_ms"])
             stale = d.wait(lambda s: s["frames"] == queued and
                            source(s, 1, 0)["freshness"] == "stale")
-            assert source(stale, 1, 0)["current"] == 0
-            assert source(stale, 1, 0)["high"] == int(index == 1)
+            require((source(stale, 1, 0)["current"] == 0))
+            require((source(stale, 1, 0)["high"] == int(index == 1)))
             pg.start()
             expected.extend(values[-4:])
             done = wait_p(d, lambda s: caught_up(s) and s["readings_written"] == len(expected))
-            assert done["run_id"] == rid and readings(pg, rid) == expected
-            assert done["outages"] == initial["outages"] + index + 1
+            require((done["run_id"] == rid and readings(pg, rid) == expected))
+            require((done["outages"] == initial["outages"] + index + 1))
             durations.append(done["last_outage_ms"])
-            assert done["outage_total_ms"] - initial["outage_total_ms"] == sum(durations)
-            assert done["readings_queued"] == done["readings_written"] + done["readings_dropped"]
-            assert pg.sql(f"SELECT sum(reading_drops),sum(event_drops) FROM vigil.checkpoints "
-                          f"WHERE run_id='{rid}'") == f"{dropped}|0"
+            require((done["outage_total_ms"] - initial["outage_total_ms"] == sum(durations)))
+            require((done["readings_queued"] == done["readings_written"] + done["readings_dropped"]))
+            require((pg.sql(f"SELECT sum(reading_drops),sum(event_drops) FROM vigil.checkpoints "
+                          f"WHERE run_id='{rid}'") == f"{dropped}|0"))
             assert_current(pg, rid, high=index == 1)
         d.stop()
-        assert latest(d)["abandoned_readings"] == latest(d)["abandoned_events"] == 0
+        require((latest(d)["abandoned_readings"] == latest(d)["abandoned_events"] == 0))
         checkpoints = json.loads(pg.sql(f"SELECT json_agg(x ORDER BY batch_id) FROM "
                                 f"(SELECT * FROM vigil.checkpoints WHERE run_id='{rid}') x"))
         gaps = [c for c in checkpoints if c["kind"] == "gap"]
-        assert len(gaps) == 1 and gaps[0]["reading_drops"] == 5
+        require((len(gaps) == 1 and gaps[0]["reading_drops"] == 5))
         health = gaps[0]["detail"]
-        assert loss_bounds[0] <= health["first_drop_ms"] <= health["last_drop_ms"] <= loss_bounds[1]
+        require((loss_bounds[0] <= health["first_drop_ms"] <= health["last_drop_ms"] <= loss_bounds[1]))
         Path(os.environ["VIGIL_EVIDENCE_DIR"], "checkpoints.json").write_text(json.dumps(checkpoints, indent=2) + "\n")
         return dict(run_id=rid, cycles=3, arrivals=14, retained=9, dropped=5,
                     sql_values=expected, outage_durations_ms=durations,
@@ -120,17 +121,17 @@ def permission_recovery(exe, pg):
     try:
         with daemon(exe, pg, capacity=8) as d:
             first = wait_p(d, lambda s: s["query_failures"] >= 1 and s["degraded"])
-            assert first["last_error"] == "42501", first
+            require((first["last_error"] == "42501"), lambda: (first))
             with bus() as raw:
                 for counter in range(5):
                     send(raw, reading(1, 0, 2800 + counter, 0, counter))
             stale = d.wait(lambda s: s["valid_readings"] == 5 and
                            source(s, 1, 0)["freshness"] == "stale")
-            assert source(stale, 1, 0)["high"] == 1 and source(stale, 1, 0)["current"] == 0
+            require((source(stale, 1, 0)["high"] == 1 and source(stale, 1, 0)["current"] == 0))
             pg.sql("GRANT EXECUTE ON FUNCTION vigil.write_batch(jsonb) TO vigil")
             done = wait_p(d, lambda s: caught_up(s) and s["readings_written"] == 5)
-            assert readings(pg, done["run_id"]) == list(range(2800, 2805))
-            assert done["readings_dropped"] == done["events_dropped"] == 0
+            require((readings(pg, done["run_id"]) == list(range(2800, 2805))))
+            require((done["readings_dropped"] == done["events_dropped"] == 0))
             assert_current(pg, done["run_id"])
             d.stop()
             return dict(sqlstate=first["last_error"], retained=5, dropped=0,
@@ -155,20 +156,20 @@ def maximum_snapshot(exe, pg):
                         send(raw, frame)
                 total = 48 if hot else 96
                 snap = d.wait(lambda s: s["frames"] == total)
-                assert snap["rejected"] == 0 and snap["valid_readings"] == total * 2 // 3
-                assert all(source(snap, p, c)["current"] for p in range(1, 17) for c in (0, 1))
+                require((snap["rejected"] == 0 and snap["valid_readings"] == total * 2 // 3))
+                require((all(source(snap, p, c)["current"] for p in range(1, 17) for c in (0, 1))))
                 done = wait_p(d, lambda s: caught_up(s) and s["readings_written"] == total * 2 // 3)
                 alarms = current_alarms(pg, done["run_id"])
-                assert len(alarms) == 193
-                assert len({(a["pod"], a["channel"], a["detail"]["kind"]) for a in alarms}) == 193
+                require((len(alarms) == 193))
+                require((len({(a["pod"], a["channel"], a["detail"]["kind"]) for a in alarms}) == 193))
                 highs = [a for a in alarms if a["detail"]["kind"] == "high"]
-                assert len(highs) == 32 and all(a["detail"]["active"] == hot for a in highs)
-                assert done["readings_dropped"] == done["events_dropped"] == 0
+                require((len(highs) == 32 and all(a["detail"]["active"] == hot for a in highs)))
+                require((done["readings_dropped"] == done["events_dropped"] == 0))
                 if hot:
                     d.wait(lambda s: s["frames"] == 48 and
                            all(source(s, p, c)["freshness"] == "stale" for p in range(1, 17) for c in (0, 1)))
         d.stop()
-        assert latest(d)["abandoned_readings"] == latest(d)["abandoned_events"] == 0
+        require((latest(d)["abandoned_readings"] == latest(d)["abandoned_events"] == 0))
         return dict(pods=16, readings=64, heartbeats=32, snapshot_entries=193,
                     distinct_high_alarms=32, dropped=0)
     finally:
@@ -184,9 +185,9 @@ def startup_validation(exe):
     for args, values in cases:
         env = dict(os.environ, **values, PGPASSWORD="vigil-test-canary-no-real-secret")
         result = subprocess.run([exe, *args], env=env, capture_output=True, text=True, timeout=3)
-        assert result.returncode == 2 and "ready " not in result.stderr, (args, values, result)
-        assert "vigil-test-canary-no-real-secret" not in result.stdout + result.stderr
-        assert "AddressSanitizer" not in result.stderr and "runtime error:" not in result.stderr
+        require((result.returncode == 2 and "ready " not in result.stderr), lambda: ((args, values, result)))
+        require(("vigil-test-canary-no-real-secret" not in result.stdout + result.stderr))
+        require(("AddressSanitizer" not in result.stderr and "runtime error:" not in result.stderr))
     return dict(invalid_startups=len(cases), expected_exit=2, credential_canary_logged=False)
 
 

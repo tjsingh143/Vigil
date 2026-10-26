@@ -467,6 +467,10 @@ static int validate_schema(struct vigil_outbox *o)
 }
 static int load_usage(struct vigil_outbox *o)
 {
+    /* Failed prepare/step/finalize must not expose a partly refreshed cache. */
+    struct vigil_outbox_usage usage = {0};
+    char spool_id[37] = {0};
+    int64_t next_order = 0;
     sqlite3_stmt *s = NULL;
     int rc =
         prepare(o,
@@ -478,12 +482,14 @@ static int load_usage(struct vigil_outbox *o)
         rc = sqlite3_step(s);
         if (rc == SQLITE_ROW) {
             const char *spool = (const char *)sqlite3_column_text(s, 0);
-            if (spool == NULL || !uuid(spool))
+            if (spool == NULL)
+                rc = sqlite3_errcode(o->db) == SQLITE_NOMEM ? SQLITE_NOMEM : SQLITE_CORRUPT;
+            else if (!uuid(spool))
                 rc = SQLITE_CORRUPT;
             else {
-                memcpy(o->spool, spool, sizeof(o->spool));
-                o->next_order = sqlite3_column_int64(s, 1);
-                o->usage =
+                memcpy(spool_id, spool, sizeof(spool_id));
+                next_order = sqlite3_column_int64(s, 1);
+                usage =
                     (struct vigil_outbox_usage){.records = (uint64_t)sqlite3_column_int64(s, 2),
                                                 .batches = (uint64_t)sqlite3_column_int64(s, 3),
                                                 .bytes = (uint64_t)sqlite3_column_int64(s, 4),
@@ -499,7 +505,13 @@ static int load_usage(struct vigil_outbox *o)
         } else if (rc == SQLITE_DONE)
             rc = SQLITE_CORRUPT;
     }
-    return finish(s, rc);
+    rc = finish(s, rc);
+    if (rc == SQLITE_OK) {
+        memcpy(o->spool, spool_id, sizeof(o->spool));
+        o->next_order = next_order;
+        o->usage = usage;
+    }
+    return rc;
 }
 static int load_run(struct vigil_outbox *o)
 {
@@ -1033,6 +1045,7 @@ enum vigil_store_result vigil_outbox_append(struct vigil_outbox *o, const struct
         rc = recover(o, &found);
         if (rc != SQLITE_OK) return result(o, rc);
         if (found) {
+            vigil_test_hook("after_append_reconciled");
             *committed = o->candidate;
             o->pending = false;
             return result(o, SQLITE_OK);
@@ -1207,13 +1220,20 @@ enum vigil_store_result vigil_outbox_retire(struct vigil_outbox *o, const struct
         if (rc != SQLITE_OK) return result(o, rc);
         if (o->pending && found) {
             o->uncertain = true; /* append must publish its recovered candidate */
-            return VIGIL_STORE_BUSY;
+            o->error = SQLITE_OK;
+            return VIGIL_STORE_APPEND_PENDING;
         }
     }
     int64_t prefix = 0;
     rc = scalar(o, "SELECT last_retired_order FROM spool_meta", &prefix);
-    if (rc == SQLITE_OK && (uint64_t)prefix == b->id.order_id)
-        return result(o, SQLITE_OK); /* sealed uncertain retirement, same pinned result */
+    if (rc == SQLITE_OK && (uint64_t)prefix == b->id.order_id) {
+        /* The sealed commit may have succeeded while its usage reload failed
+         * (including NOMEM). A prefix alone cannot publish cached accounting. */
+        rc = load_usage(o);
+        if ((rc & 255) == SQLITE_IOERR || (rc & 255) == SQLITE_CANTOPEN ||
+            (rc & 255) == SQLITE_PROTOCOL) o->uncertain = true;
+        return result(o, rc);
+    }
     if (rc == SQLITE_OK && ((uint64_t)prefix + 1U != b->id.order_id || b->bytes == 0 ||
                            b->bytes > VIGIL_PAYLOAD_MAX)) rc = SQLITE_CORRUPT;
     if (rc == SQLITE_OK) rc = mutation_ready(o);
@@ -1351,6 +1371,6 @@ int vigil_outbox_error(const struct vigil_outbox *o)
 const char *vigil_store_name(enum vigil_store_result r)
 {
     static const char *const names[] = {"ready",   "full",  "busy",      "recovering", "fault",
-                                        "invalid", "nomem", "exhausted", "readonly"};
+                                        "invalid", "nomem", "exhausted", "readonly", "append_pending"};
     return (unsigned)r < sizeof(names) / sizeof(names[0]) ? names[r] : "invalid";
 }

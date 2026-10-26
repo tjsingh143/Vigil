@@ -1,4 +1,5 @@
 """Expected behavior: literal wire vectors, strict input ranges, deterministic pods."""
+from verification import require  # also refuses optimized execution before fixture imports
 
 from pathlib import Path
 import unittest

@@ -6,6 +6,59 @@ application workloads, not hard real-time behavior, physical CAN, power-loss
 qualification or universal throughput limits. Final measured tables below are
 populated only from the completed candidate gate.
 
+## Audit remediation measurements
+
+The original Stage 4 tables below are historical measurements of the candidate
+rejected by independent audit. Keep their remote throughput deficit visible.
+The first repaired gate (`artifacts/remediation-final-gate/benchmark`) completed
+three matched trials per binary on 2026-10-25. Median remote status-window rate
+was **74.37 readings/s** versus **99.995/s** for original Vigil and the previous
+candidate's 82.50/s. Local admission was 99.997/s, with no known losses and exact
+6,800-reading final reconciliation in each trial. The 600-reading drain measured
+10.12 s versus original 0.86 s; daemon CPU 11.52% versus 2.25% of one core; sampled
+peak RSS 11.67 versus 7.77 MiB. Monitoring accepted the offered 100/s; same-run
+core p50/p95/p99 medians matched at 83/84/84 ns, and alarm lateness medians were
+7 ms versus 5 ms. The remote decrease of about 9.9% relative to the earlier
+candidate is an observed comparison, not an attributed cause. These finite,
+non-isolated VM runs do not establish a throughput guarantee or causal regression.
+
+The final archived rerun passed all six paced trials and six finite bursts on
+Linux 6.8.0-147; raw data is in `artifacts/remediation-final-gate-3/benchmark/`.
+Each paced trial reconciled all 6,800 readings without known reading/event loss;
+all repaired stores ended with zero pending records, batches and bytes. The
+source digest is `353462a3e1bd7db82284adfbba09e81ad903c5a5540e7f964f42fc6843c96e06`.
+
+| Final archived rerun: median (range), three trials | Original Vigil | Repaired Resilience |
+| --- | --- | --- |
+| Paced monitoring readings/s | 100.00 (100.00–100.00) | 100.00 (100.00–100.00) |
+| Remote window readings/s | 100.01 (100.00–100.01) | 83.86 (82.18–84.30) |
+| Remote completion incl. catch-up readings/s | 100.00 (99.96–100.00) | 81.97 (81.11–83.13) |
+| 600-reading drain, s | 0.94 (0.83–0.94) | 8.87 (8.85–9.17) |
+| Daemon CPU, % of one core | 1.97 (1.93–2.13) | 12.86 (12.25–13.26) |
+| Peak sampled RSS, MiB | 7.76 (7.75–7.78) | 11.16 (11.12–11.27) |
+| Alarm lateness beyond 500 ms, ms | 7.00 (6.00–10.00) | 8.00 (7.00–8.00) |
+| Core frame p50, ns | 85.00 (85.00–167.00) | 167.00 (84.00–169.00) |
+| Core frame p95, ns | 86.00 (85.00–209.00) | 209.00 (84.00–211.00) |
+| Core frame p99, ns | 86.00 (86.00–210.00) | 209.00 (84.00–212.00) |
+| Local admission readings/s | N/A | 99.98 (99.95–99.98) |
+
+Both completed repaired runs are retained. The kernel changed after VM reboot;
+shared-host scheduling/storage also vary. The results do not isolate a causal
+performance effect of this small recovery repair. Normal monitoring met the
+same offered load and alarm checks, while remote replay still failed to sustain
+100 readings/s for the natural batch shape. Neither the faster archived rerun
+nor its API measurements erase the slower first result. No sustainable delivery,
+physical CAN or asynchronous per-record latency guarantee is inferred.
+
+The final direct-core probe's median p50 is slower (167 ns versus 85 ns), and
+its bulk median is also lower; this is retained in the raw results, not treated
+as an improvement. Trial 2 reverses the ordering (84 ns Resilience, 167 ns
+original), and clock-pair p50 spans 0–42 ns with p95 up to 85 ns. The monitor,
+config and protocol sources are byte-identical to original d179681. These
+non-isolated, quantized measurements cannot attribute a core-code regression;
+no tight core-latency guarantee is claimed. The production workload still meets
+the offered 100/s monitoring load, exact counts and alarm timing checks.
+
 ## Matched method and measurement boundaries
 
 `tests/resilience_benchmark.py` builds original commit
@@ -61,7 +114,7 @@ For daemon totals only three trials exist: ranges and median describe those
 three trials, not reliable tail percentiles. API percentiles pool 600 measured
 batches per size; individual trial files retain between-run variability.
 
-## Observed candidate results
+## Historical Stage 4 candidate results
 
 Final clean gate: **68 zero command exits**, 2026-10-24T17:28:50.960947+00:00 through 2026-10-24T17:55:45.543621+00:00.
 Candidate implementation SHA-256: `88f09dabc79ede8a750f1e68659ed478b0fb2e8787c6459bcf107f8504e58cd0`. Original implementation SHA-256: `b87b8f78da76c8bcfbf7c07d7f2ec26f795ca27d56bb18eedebf864479cf419b`.

@@ -5,6 +5,7 @@ Written expectations: docs/CHECKPOINT_2_VERIFICATION.md and scenario docstrings.
 Readiness/condition driven, bounded deadlines. Real time is used only to prove
 the Linux timeout/event-loop behavior; physical checks use deterministic C tests.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 
 import argparse
 from contextlib import contextmanager
@@ -78,10 +79,10 @@ class Daemon:
         self.errors = bytearray()
         self.allow_rx_overflow = False
         try:
-            assert select.select([self.child.stderr], [], [], startup_timeout)[0], "daemon readiness timeout"
+            require((select.select([self.child.stderr], [], [], startup_timeout)[0]), lambda: ("daemon readiness timeout"))
             line = self.child.stderr.readline()
             self.errors.extend(line)
-            assert line.startswith(b"ready "), line
+            require((line.startswith(b"ready ")), lambda: (line))
             # /proc enumeration is not atomic: the separate PG owner may
             # close an ephemeral socket between readdir and readlink.
             targets = []
@@ -90,23 +91,23 @@ class Daemon:
                     targets.append(os.readlink(path))
                 except FileNotFoundError:
                     continue
-            assert self.child.poll() is None
-            assert targets.count("anon_inode:[signalfd]") == 1, targets
-            assert targets.count("anon_inode:[timerfd]") == 1, targets
+            require((self.child.poll() is None))
+            require((targets.count("anon_inode:[signalfd]") == 1), lambda: (targets))
+            require((targets.count("anon_inode:[timerfd]") == 1), lambda: (targets))
             if not persistence:
-                assert sum(target.startswith("socket:") for target in targets) == 1, targets
-            assert self.config.name not in targets, targets  # config closed before ready
+                require((sum(target.startswith("socket:") for target in targets) == 1), lambda: (targets))
+            require((self.config.name not in targets), lambda: (targets))  # config closed before ready
         except BaseException:
             self.close()
             raise
 
     def pump(self, timeout=0.1):
         if not select.select([self.child.stdout], [], [], timeout)[0]:
-            assert self.child.poll() is None, self.child.stderr.read().decode()
+            require((self.child.poll() is None), lambda: (self.child.stderr.read().decode()))
             return
         data = os.read(self.child.stdout.fileno(), 65536)
         if not data:
-            assert self.child.poll() in (None, 0), self.child.stderr.read().decode()
+            require((self.child.poll() in (None, 0)), lambda: (self.child.stderr.read().decode()))
             return
         self.buffer += data
         self.transcript.extend(data)
@@ -117,8 +118,8 @@ class Daemon:
             if row["event"] == "snapshot":
                 self.pending = dict(row, rows=[])
             elif row["event"] == "snapshot_end":
-                assert self.pending is not None and self.pending["id"] == row["id"]
-                assert row["diagnostics_dropped"] == 0, row
+                require((self.pending is not None and self.pending["id"] == row["id"]))
+                require((row["diagnostics_dropped"] == 0), lambda: (row))
                 self.snapshots.append(self.pending)
                 self.pending = None
             elif self.pending is not None:
@@ -130,10 +131,10 @@ class Daemon:
         while time.monotonic() < deadline:
             for snap in self.snapshots[checked:]:
                 if predicate(snap):
-                    assert snap["frames"] == snap["valid_readings"] + snap["heartbeats"] + snap["rejected"]
-                    assert snap["rejected"] == sum(row["count"] for row in snap["rows"]
-                                                   if row["event"] == "reject_count")
-                    assert self.allow_rx_overflow or snap["rx_overflow"] == 0
+                    require((snap["frames"] == snap["valid_readings"] + snap["heartbeats"] + snap["rejected"]))
+                    require((snap["rejected"] == sum(row["count"] for row in snap["rows"]
+                                                   if row["event"] == "reject_count")))
+                    require((self.allow_rx_overflow or snap["rx_overflow"] == 0))
                     return snap
             checked = len(self.snapshots)
             self.pump(min(0.1, max(0, deadline - time.monotonic())))
@@ -144,12 +145,12 @@ class Daemon:
         deadline = time.monotonic() + 2
         while self.child.poll() is None and time.monotonic() < deadline:
             self.pump(0.05)
-        assert self.child.wait(timeout=0.1) == 0
+        require((self.child.wait(timeout=0.1) == 0))
         self.pump(0)
         stderr = self.child.stderr.read().decode()
         self.errors.extend(stderr.encode())
-        assert not stderr, stderr  # includes any sanitizer report
-        assert any(row["event"] == "stopped" for row in self.events)
+        require((not stderr), lambda: (stderr))  # includes any sanitizer report
+        require((any(row["event"] == "stopped" for row in self.events)))
 
     def close(self):
         if self.child.poll() is None:
@@ -190,10 +191,10 @@ def simulator(pod, observer=None):
     try:
         deadline = time.monotonic() + 5
         while not select.select([child.stdout], [], [], 0.02)[0]:
-            assert time.monotonic() < deadline, "simulator readiness timeout"
+            require((time.monotonic() < deadline), lambda: ("simulator readiness timeout"))
             if observer is not None:
                 observer.pump(0)
-        assert child.stdout.readline().startswith(b"ready ")
+        require((child.stdout.readline().startswith(b"ready ")))
         yield child
     finally:
         if child.poll() is None:
@@ -207,8 +208,8 @@ def simulator(pod, observer=None):
             child.kill()
             child.communicate(timeout=2)
             raise
-        assert child.returncode == 0, (out, err)
-        assert b"stopped cycles=" in out, out
+        require((child.returncode == 0), lambda: ((out, err)))
+        require((b"stopped cycles=" in out), lambda: (out))
 
 
 @contextmanager
@@ -220,7 +221,7 @@ def bus():
 
 def send(raw, frame):
     can_id, data = frame
-    assert raw.send(struct.pack("=IB3x8s", can_id, len(data), data)) == 16
+    require((raw.send(struct.pack("=IB3x8s", can_id, len(data), data)) == 16))
 
 
 def finite_simulator(executable, repeated=False):
@@ -236,10 +237,10 @@ def finite_simulator(executable, repeated=False):
         try:
             deadline = time.monotonic() + 5
             while sim.poll() is None:
-                assert time.monotonic() < deadline, "finite simulator deadline"
+                require((time.monotonic() < deadline), lambda: ("finite simulator deadline"))
                 d.pump(0.02)
             _, errors = sim.communicate(timeout=1)
-            assert sim.returncode == 0, errors
+            require((sim.returncode == 0), lambda: (errors))
         finally:
             if sim.poll() is None:
                 sim.kill()
@@ -248,17 +249,17 @@ def finite_simulator(executable, repeated=False):
             sim.stderr.close()
         expected = 36 if repeated else 18
         snap = d.wait(lambda s: s["frames"] >= expected)
-        assert snap["frames"] == expected, snap
-        assert snap["valid_readings"] == 12 and snap["heartbeats"] == 6, snap
-        assert snap["rejected"] == (18 if repeated else 0), snap
-        assert rejection(snap, "repeat") == (18 if repeated else 0)
-        assert snap["loss"] == 0
+        require((snap["frames"] == expected), lambda: (snap))
+        require((snap["valid_readings"] == 12 and snap["heartbeats"] == 6), lambda: (snap))
+        require((snap["rejected"] == (18 if repeated else 0)), lambda: (snap))
+        require((rejection(snap, "repeat") == (18 if repeated else 0)))
+        require((snap["loss"] == 0))
         for pod in (1, 2):
             for channel, value in ((0, 2202), (1, 0)):
                 row = source(snap, pod, channel)
-                assert row["accepted"] == 3 and row["value"] == value and row["current"] == 1
-            assert progress(snap, pod, -2)["counter"] == 5
-            assert progress(snap, pod, -1)["counter"] == 2
+                require((row["accepted"] == 3 and row["value"] == value and row["current"] == 1))
+            require((progress(snap, pod, -2)["counter"] == 5))
+            require((progress(snap, pod, -1)["counter"] == 2))
         d.stop()
     print(f"PASS exact simulator counts: frames={expected}, readings=12, heartbeats=6, "
           f"repeats={18 if repeated else 0}, loss=0")
@@ -278,12 +279,12 @@ def silence_restart(executable):
                        and all(source(s, 1, c)["freshness"] == "stale" for c in (0, 1))
                        and pod_status(s, 1)["heartbeat"] == "stale")
         for c in (0, 1):
-            assert source(stale, 1, c)["current"] == 0
-            assert source(stale, 2, c)["current"] == 1
-        assert pod_status(stale, 2)["heartbeat"] == "fresh"
+            require((source(stale, 1, c)["current"] == 0))
+            require((source(stale, 2, c)["current"] == 1))
+        require((pod_status(stale, 2)["heartbeat"] == "fresh"))
         # Interpreter/process startup may exceed a freshness interval on a VM.
         # Measure this fault from the observed healthy state, not process birth.
-        assert stale["stale_events"] - healthy["stale_events"] == 3, (healthy, stale)
+        require((stale["stale_events"] - healthy["stale_events"] == 3), lambda: ((healthy, stale)))
         ages = []
         for c in (-1, 0, 1):
             event = next(e for e in d.events if e["event"] == "alarm"
@@ -293,15 +294,15 @@ def silence_restart(executable):
             last = (pod_status(stale, 1)["last_heartbeat_ms"] if c == -1
                     else source(stale, 1, c)["last_valid_ms"])
             age = event["now_ms"] - last
-            assert 600 <= age <= 820, age  # 20 ms tick + 200 ms VM scheduling allowance
+            require((600 <= age <= 820), lambda: (age))  # 20 ms tick + 200 ms VM scheduling allowance
             ages.append(age)
         with simulator(1, d):
             recovered = d.wait(lambda s: s["now_ms"] > stale["now_ms"]
                                and s["recoveries"] - healthy["recoveries"] == 3 and
                                all(source(s, 1, c)["current"] == 1 for c in (0, 1)))
-            assert recovered["counter_resets"] - healthy["counter_resets"] == 2
-            assert recovered["rejected"] == 0, recovered
-            assert recovered["loss"] == 0, recovered
+            require((recovered["counter_resets"] - healthy["counter_resets"] == 2))
+            require((recovered["rejected"] == 0), lambda: (recovered))
+            require((recovered["loss"] == 0), lambda: (recovered))
         d.stop(signal.SIGINT)
     print(f"PASS pod 1 stop/restart; pod 2 remained fresh; communication alarm ages={ages} ms; "
           "3 recoveries, 2 counter resets, no rejection/loss")
@@ -324,13 +325,13 @@ def faults(executable):
         for frame in malformed:
             send(raw, frame)
         bad = d.wait(lambda s: s["frames"] == 12)
-        assert bad["rejected"] == 9 and bad["alarm_transitions"] == before["alarm_transitions"]
+        require((bad["rejected"] == 9 and bad["alarm_transitions"] == before["alarm_transitions"]))
         for c in (0, 1):
-            assert source(bad, 1, c)["value"] == source(before, 1, c)["value"]
-            assert source(bad, 1, c)["last_valid_ms"] == source(before, 1, c)["last_valid_ms"]
+            require((source(bad, 1, c)["value"] == source(before, 1, c)["value"]))
+            require((source(bad, 1, c)["last_valid_ms"] == source(before, 1, c)["last_valid_ms"]))
         for reason, count in (("length", 1), ("crc", 1), ("id", 1), ("format", 2),
                               ("channel", 1), ("status", 1), ("value", 1), ("state", 1)):
-            assert rejection(bad, reason) == count, (reason, bad)
+            require((rejection(bad, reason) == count), lambda: ((reason, bad)))
         for frame in (reading(1, 0, 2300, 0, 15), reading(1, 0, 2400, 0, 15),
                       reading(1, 0, 2400, 0, 14), reading(1, 0, 8501, 0, 16),
                       reading(1, 0, 2300, 1, 17), reading(2, 0, 2200, 0, 0),
@@ -339,13 +340,13 @@ def faults(executable):
                       reading(1, 0, 2600, 0, 22)):
             send(raw, frame)
         after = d.wait(lambda s: s["frames"] == 23)
-        assert after["loss"] == 3 and after["rejected"] == 14
-        assert after["valid_readings"] == 8 and after["heartbeats"] == 1
+        require((after["loss"] == 3 and after["rejected"] == 14))
+        require((after["valid_readings"] == 8 and after["heartbeats"] == 1))
         for reason in ("repeat", "old", "range", "sensor_fault", "unconfigured_pod"):
-            assert rejection(after, reason) == 1
-        assert source(after, 1, 0)["value"] == 2600 and source(after, 1, 0)["current"] == 1
+            require((rejection(after, reason) == 1))
+        require((source(after, 1, 0)["value"] == 2600 and source(after, 1, 0)["current"] == 1))
         high_events = [e for e in d.events if e["event"] == "alarm" and e["kind"] == "high"]
-        assert [e["state"] for e in high_events] == ["active", "cleared"]
+        require(([e["state"] for e in high_events] == ["active", "cleared"]))
         # Independent command-line injector reaches vigild too, with next counter 23.
         _, payload = reading(1, 0, 2500, 0, 23)
         subprocess.run(["cansend", "vcan0", f"101#{payload.hex()}"], check=True, timeout=2)
@@ -374,12 +375,12 @@ def heartbeat_only_and_repeats(executable):
             if d.snapshots and d.snapshots[-1]["now_ms"] - start["now_ms"] >= 1000:
                 break
         snap = d.snapshots[-1]
-        assert snap["now_ms"] - start["now_ms"] >= 1000
-        assert snap["valid_readings"] == 2 and snap["counter_resets"] == 0
-        assert rejection(snap, "repeat") >= 10
-        assert all(source(snap, 1, c)["freshness"] == "stale" for c in (0, 1))
-        assert pod_status(snap, 1)["heartbeat"] == "fresh"
-        assert snap["stale_events"] == 2
+        require((snap["now_ms"] - start["now_ms"] >= 1000))
+        require((snap["valid_readings"] == 2 and snap["counter_resets"] == 0))
+        require((rejection(snap, "repeat") >= 10))
+        require((all(source(snap, 1, c)["freshness"] == "stale" for c in (0, 1))))
+        require((pod_status(snap, 1)["heartbeat"] == "fresh"))
+        require((snap["stale_events"] == 2))
         d.stop()
     print("PASS continuous repeated readings stay stale across >3 timeout intervals; heartbeat stays fresh")
 
@@ -396,11 +397,11 @@ def signals_and_cli(executable):
                  ("--unknown", "1"), ("--config",),
                  ("--interface", "vcan0", "--interface", "vcan0")):
         result = subprocess.run([executable, *args], capture_output=True, timeout=3)
-        assert result.returncode == 2, (args, result.stderr)
-        assert b"AddressSanitizer" not in result.stderr and b"runtime error:" not in result.stderr
+        require((result.returncode == 2), lambda: ((args, result.stderr)))
+        require((b"AddressSanitizer" not in result.stderr and b"runtime error:" not in result.stderr))
     guard = subprocess.run([sys.executable, "-O", __file__, "--daemon", executable],
                            capture_output=True, timeout=3)
-    assert guard.returncode != 0 and b"assertions must remain enabled" in guard.stderr
+    require((guard.returncode != 0 and b"assertions must remain enabled" in guard.stderr))
     print("PASS SIGUSR1 snapshots, SIGINT/SIGTERM shutdown, startup error paths, optimized-Python guard")
 
 
@@ -412,8 +413,8 @@ def diagnostic_backpressure(executable):
         child = subprocess.Popen([executable, "--config", config.name, "--no-persistence"], cwd=ROOT,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=4096)
         try:
-            assert select.select([child.stderr], [], [], 5)[0]
-            assert child.stderr.readline().startswith(b"ready ")
+            require((select.select([child.stderr], [], [], 5)[0]))
+            require((child.stderr.readline().startswith(b"ready ")))
             with bus() as raw:
                 send(raw, reading(1, 0, 2800, 0, 0))
             # This is a deliberate slow-consumer interval, not a readiness sleep.
@@ -428,29 +429,29 @@ def diagnostic_backpressure(executable):
             found_summary = found_source = False
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline and not (found_summary and found_source):
-                assert select.select([child.stdout], [], [], 1)[0]
+                require((select.select([child.stdout], [], [], 1)[0]))
                 chunk = os.read(child.stdout.fileno(), 65536)
-                assert chunk, child.stderr.read().decode()
+                require((chunk), lambda: (child.stderr.read().decode()))
                 data += chunk
                 while b"\n" in data:
                     line, data = data.split(b"\n", 1)
                     row = parse(line.decode())
                     if row["event"] == "snapshot" and row["now_ms"] >= drain_ms:
-                        assert row["diagnostics_dropped"] > 0, row
-                        assert row["valid_readings"] == 1 and row["stale_events"] == 3, row
-                        assert row["alarm_transitions"] == 4, row  # high + 3 communication
+                        require((row["diagnostics_dropped"] > 0), lambda: (row))
+                        require((row["valid_readings"] == 1 and row["stale_events"] == 3), lambda: (row))
+                        require((row["alarm_transitions"] == 4), lambda: (row))  # high + 3 communication
                         found_summary = True
                     if row["event"] == "source" and row["channel"] == 0 and row["freshness"] == "stale":
-                        assert row["last_valid_ms"] < drain_ms - 200, row
-                        assert row["high"] == 1 and row["current"] == 0, row
+                        require((row["last_valid_ms"] < drain_ms - 200), lambda: (row))
+                        require((row["high"] == 1 and row["current"] == 0), lambda: (row))
                         found_source = True
-            assert found_summary and found_source
+            require((found_summary and found_source))
             child.stdout.close()  # A vanished reader must not terminate via SIGPIPE.
             child.send_signal(signal.SIGUSR1)
             child.terminate()
-            assert child.wait(timeout=2) == 0
+            require((child.wait(timeout=2) == 0))
             stderr = child.stderr.read()
-            assert not stderr, stderr
+            require((not stderr), lambda: (stderr))
         finally:
             if child.poll() is None:
                 child.kill()

@@ -724,3 +724,31 @@ backlog and eventually reach capacity if that service-rate difference persists.
 The original's corresponding remote rate was 100.00/s; its faster path does not
 provide the local process-crash boundary. Use the full per-trial ranges and
 measurement definitions in the performance report, not a single number alone.
+
+## Independent audit repair — prove progress as well as safety
+
+The retirement guard explained above prevented counters from being published in
+the wrong order, but also created a dependency cycle: retirement asked append
+to reconcile, while the coordinator blocked append until retirement succeeded.
+A live main loop and working watchdog did not prove persistence progress. Trace
+APPEND_PENDING from `vigil_outbox_retire` to the writer: it publishes the same
+held committed append, clears its pending marker, then retires the confirmed
+FIFO head. The progress measure is two unpublished operations becoming one,
+then none; ordinary failures do not bypass the guard.
+
+A committed transaction and a successful status publication are also different
+boundaries. Retirement NOMEM can happen after DELETE/counters commit. Finding the
+prefix on retry proves retirement, but cannot make an old cached usage snapshot
+correct. Trace the unconditional prefix reload and the usage loader's temporary
+snapshot. Only a fully successful query replaces the cache; the coordinator
+publishes current-run acknowledgements and spool totals together.
+
+Read `tests/resilience_remediation.py` with the production writer. The fixture
+holds both workers, requires a real confirmed PG result, and observes recovery
+without restart or additional sensor frames. SIGKILL cases answer a different
+question: what survives each publication cut. The original algorithm must fail
+the same fixture, otherwise it might be testing an easier ordering. Python
+`assert` disappears under optimization; explicit `require` and early interpreter
+refusal protect test conclusions and fixture safety alike. Bad-database, child
+exit, fixture-identity and expected-result negative controls test the oracle.
+See [RESILIENCE_REMEDIATION.md](RESILIENCE_REMEDIATION.md) for evidence and limits.

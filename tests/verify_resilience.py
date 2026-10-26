@@ -2,6 +2,7 @@
 """Clean release-candidate gate: regressions, faults, demo and matched benchmarks
 on isolated real Linux/SQLite/PostgreSQL. No independent-verification claim.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from datetime import datetime, timezone
 import json
@@ -18,12 +19,26 @@ from evidence import source_digest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def run_command(out, report, env, expected, cmd):
+    commands = report["commands"]
+    print("EXPECT:", expected, flush=True)
+    print("COMMAND:", shlex.join(cmd), flush=True)
+    start = time.monotonic()
+    entry = dict(expected=expected, command=cmd, started_utc=datetime.now(timezone.utc).isoformat(),
+                 log=f"{len(commands):02d}.log")
+    with (out / entry["log"]).open("w") as log:
+        result = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
+    entry.update(exit_code=result.returncode, duration_s=time.monotonic() - start)
+    commands.append(entry)
+    (out / "gate.json").write_text(json.dumps(report, indent=2))
+    require((result.returncode == 0), lambda: (f"failed {shlex.join(cmd)}: {out / entry['log']}"))
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clean", action="store_true")
     ap.add_argument("--output", type=Path, default=Path("artifacts") / ("resilience-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")))
     args = ap.parse_args()
-    assert sys.platform == "linux" and not sys.flags.optimize
+    require((sys.platform == "linux" and not sys.flags.optimize))
     os.chdir(ROOT)
     # Inherited service/options/credentials or fault controls cannot select test
     # endpoints. Each PG fixture allocates its own cluster and explicit route.
@@ -35,23 +50,13 @@ def main():
     commands = []
     report = dict(started_utc=datetime.now(timezone.utc).isoformat(), source_sha256=source_digest(),
                   head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                  kernel=platform.platform(), commands=commands)
+                  kernel=platform.platform(), python_optimize=sys.flags.optimize, commands=commands)
     env = dict(os.environ, ASAN_OPTIONS="detect_leaks=1:halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
                TSAN_OPTIONS="halt_on_error=1")
     def run(expected, cmd):
-        print("EXPECT:", expected, flush=True)
-        print("COMMAND:", shlex.join(cmd), flush=True)
-        start = time.monotonic()
-        entry = dict(expected=expected, command=cmd, started_utc=datetime.now(timezone.utc).isoformat(),
-                     log=f"{len(commands):02d}.log")
-        with (out / entry["log"]).open("w") as log:
-            result = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
-        entry.update(exit_code=result.returncode, duration_s=time.monotonic() - start)
-        commands.append(entry)
-        (out / "gate.json").write_text(json.dumps(report, indent=2))
-        assert result.returncode == 0, f"failed {shlex.join(cmd)}: {out / entry['log']}"
+        run_command(out, report, env, expected, cmd)
     run("real Linux vcan0, otherwise idle", ["./scripts/vcan-up"])
-    run("seven existing Python cases", [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+    run("existing Python cases and unconditional verification negative controls", [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
     run("five original PostgreSQL v1 schema/transaction/permission contracts on disposable server", [".venv/bin/python", "tests/database_contract.py"])
     run("ten PostgreSQL v2 origin/content/concurrency/atomicity contracts on 001+002", [".venv/bin/python", "tests/resilience_database_contract.py", "--output", str(out / "sql-v2")])
     builds = [("debug", "Debug", "gcc", []), ("release", "Release", "gcc", []),
@@ -65,7 +70,7 @@ def main():
         run(f"strict {name} configure", ["cmake", "-S", ".", "-B", build, "-DCMAKE_BUILD_TYPE=" + kind, "-DCMAKE_C_COMPILER=" + cc, *flags])
         run(f"strict {name} build, no warnings", ["cmake", "--build", build, "--parallel", "2"])
         prefix = ["setarch", platform.machine(), "-R"] if name == "tsan" else []
-        run(f"65 C cases: 13 protocol, 26 monitor, 6 queue, 20 outbox; zero sanitizer findings ({name})",
+        run(f"67 C cases: 13 protocol, 26 monitor, 6 queue, 22 outbox; zero sanitizer findings ({name})",
             [*prefix, "ctest", "--test-dir", build, "-V"])
         if name != "tsan":
             run("unchanged real SocketCAN decoder regression (" + name + ")", [".venv/bin/python", "tests/integration.py", "--decoder", build + "/vigil-decode"])
@@ -76,6 +81,9 @@ def main():
         run("A-J exact remote crash/commit cuts, FIFO/origin/poison/outage/deadline assertions (" + name + ")",
             [*prefix, ".venv/bin/python", "tests/resilience_replay.py", "--build", build, "--output", str(out / (name + "-replay")),
              "--restarts", "20" if name == "debug" else "2", *(["--timing"] if name == "debug" else [])])
+        run("F1/F2 overlapping confirmed replay/uncertain append, allocation reloads, quiet progress, exact accounting and reconciliation SIGKILL cuts (" + name + ")",
+            [*prefix, ".venv/bin/python", "tests/resilience_remediation.py", "--build", build,
+             "--output", str(out / (name + "-remediation"))])
         run("Stage 3 deterministic mixed crashes, exact durable union and replay resource assertions (" + name + ")",
             [*prefix, ".venv/bin/python", "tests/resilience_adversarial.py", "--build", build,
              "--output", str(out / (name + "-adversarial")),
@@ -103,7 +111,7 @@ def main():
     for path in sorted((ROOT / "scripts").iterdir()):
         run("shell syntax " + path.name, ["bash", "-n", str(path)])
     run("diff whitespace", ["git", "diff", "--check"])
-    assert report["source_sha256"] == source_digest(), "implementation changed during gate"
+    require((report["source_sha256"] == source_digest()), lambda: ("implementation changed during gate"))
     report["completed_utc"] = datetime.now(timezone.utc).isoformat()
     (out / "gate.json").write_text(json.dumps(report, indent=2))
     print(f"PASS release-candidate clean gate: {len(commands)} commands; {out / 'gate.json'}", flush=True)

@@ -556,3 +556,35 @@ capacity. Independent verification, actual power/hardware work and the explicit
 remaining design-matrix injections are unclaimed. State records the accepted
 source digest, evidence archive and exact candidate in a subsequent local
 documentation receipt, avoiding a circular self-referencing commit hash.
+
+## Independent audit remediation — 2026-10-25
+
+The owner authorized F1–F4 remediation, Linux qualification and a local commit,
+with one agent and no publication. HEAD was verified as 8a7347c with a clean tree.
+Original audit artifacts were hashed and preserved. The existing Lima VM worked;
+no replacement was created. Exact original counterexamples failed on the audited
+Linux implementation, and the new coordinator fixtures also fail that algorithm
+with only test hooks added. Full root causes and observed results are in
+[RESILIENCE_REMEDIATION.md](RESILIENCE_REMEDIATION.md).
+
+Use an explicit APPEND_PENDING dependency result rather than removing the
+retirement freeze: only the pinned recovered append can publish before the
+confirmed head retires. This preserves the earlier accounting safety guard while
+breaking its progress cycle. Reload actual usage on prefix success and stage
+cache replacement until all query operations succeed. Preserve NOMEM as failure.
+Convert all Python verification assertions to explicit checks, preserving lazy
+failure diagnostics and predicates, and refuse optimized entry before fixture
+work. Keep targeted failure injection in test-only linker wrappers and separate
+worker pipes. Installer guidance now describes implemented SQLite/PG replay.
+No PostgreSQL migration, protocol, monitor policy or durability assumption changes.
+
+Final remediation qualification completed 2026-10-26: unchanged source passed
+72/72 clean Linux commands, all 120 new coordinator cases and archived evidence
+inspection. The first successful gate lost only temporary native fixtures at a
+later VM reboot; its host evidence remains. A fresh gate under the newer kernel
+first exposed its missing optional vcan module package, then passed completely
+after that documented prerequisite was restored. The final run used persistent
+native storage and automatic archival. Both completed benchmark sets, including
+the slower first remote delivery result and variable core timings, are retained.
+No test predicate or deadline was relaxed. Stop at the local repair commit for
+fresh independent Astra Max review; no publication or portfolio work.

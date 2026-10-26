@@ -253,3 +253,18 @@ The Stage 3 persistence benchmark/instrumentation, hardware power cuts, physical
 CAN qualification and remote retention remain outside this checkpoint. Stage 2
 acceptance does not claim every optional/full-target matrix workload was run.
 Stop after the local Stage 2 commit; no Stage 3, deployment or publication.
+
+## Independent audit remediation acceptance (2026-10-25)
+
+The owner authorized correction of F1–F4 and a new complete Linux regression;
+prior stage stop statements above are historical. Two additional obligations
+make existing recovery/accounting promises explicit: a committed held append
+must be publishable before the confirmed earlier retirement when the latter
+needs its reconciliation; and an already-retired prefix cannot publish success
+until cached usage matches the committed store. Recovery must progress in the
+same process without new sensor traffic. `tests/resilience_remediation.py`
+exercises the real coordinator with both owners overlapping, current/old-run
+counters, directory-sync/NOMEM errors and SIGKILL at reconciliation boundaries.
+The [remediation report](RESILIENCE_REMEDIATION.md) records actual results and
+remaining qualification limits. No wire, schema, durability or retention
+contract is weakened, and publication remains outside the authorized scope.

@@ -536,6 +536,83 @@ static void retire_refuses_conflict(void **state)
     assert_int_equal(vigil_outbox_retire(f->o,b),VIGIL_STORE_OK);
     free(b);
 }
+static void retire_reload_nomem(void **state)
+{
+    struct fixture *f=*state;
+    const char *faults[]={"usage_prepare_nomem","usage_step_nomem","usage_done_nomem"};
+    struct vigil_capture c=capture(2);
+    struct vigil_local_commit id;
+    struct vigil_replay_batch *b=calloc(1,sizeof(*b));
+    assert_non_null(b);
+    print_message("EXPECT: sealed retirement and retired-prefix retries fail on prepare/step NOMEM; only a complete reload publishes exact current/old-run usage.\n");
+    for (unsigned old=0; old<2U; ++old) {
+        for (size_t i=0; i<3U; ++i) {
+            assert_int_equal(vigil_outbox_append(f->o,&c,&id),VIGIL_STORE_OK);
+            assert_int_equal(vigil_outbox_peek(f->o,b),VIGIL_STORE_OK);
+            if (old!=0) {
+                assert_int_equal(vigil_outbox_close(f->o),VIGIL_STORE_OK); f->o=NULL;
+                assert_int_equal(vigil_outbox_open(&f->o,f->path,false),VIGIL_STORE_OK);
+                assert_int_equal(vigil_outbox_begin_run(f->o),VIGIL_STORE_OK);
+                assert_string_not_equal(b->run_id,vigil_outbox_run_id(f->o));
+            }
+            struct vigil_outbox_usage before, after;
+            vigil_outbox_usage(f->o,&before);
+            assert_int_equal(setenv("VIGIL_TEST_FAULT",faults[i],1),0);
+            assert_int_equal(vigil_outbox_retire(f->o,b),VIGIL_STORE_NOMEM);
+            vigil_outbox_usage(f->o,&after);
+            assert_memory_equal(&before,&after,sizeof(before));
+            /* No input/mutation can refresh the cache on our behalf. Even a
+             * failed reload on the already-retired path must remain failure. */
+            assert_int_equal(vigil_outbox_retire(f->o,b),VIGIL_STORE_NOMEM);
+            assert_int_equal(unsetenv("VIGIL_TEST_FAULT"),0);
+            assert_int_equal(vigil_outbox_retire(f->o,b),VIGIL_STORE_OK);
+            vigil_outbox_usage(f->o,&after);
+            assert_int_equal(after.records,0); assert_int_equal(after.batches,0);
+            assert_int_equal(after.bytes,0); assert_int_equal(after.retired,before.retired+2U);
+            assert_int_equal(after.admitted,after.retired);
+            assert_int_equal(vigil_outbox_retire(f->o,b),VIGIL_STORE_OK);
+            struct vigil_outbox_usage again;
+            vigil_outbox_usage(f->o,&again);
+            assert_memory_equal(&after,&again,sizeof(after));
+            sqlite3 *db=inspect(f);
+            assert_int_equal(number(db,"SELECT pending_records FROM spool_meta"),after.records);
+            assert_int_equal(number(db,"SELECT retired_records FROM spool_meta"),after.retired);
+            assert_int_equal(number(db,"SELECT last_retired_order FROM spool_meta"),b->id.order_id);
+            assert_int_equal(number(db,"SELECT count(*) FROM outbox_batches"),0);
+            assert_int_equal(number(db,"SELECT count(*) FROM origin_runs"),1);
+            assert_int_equal(sqlite3_close(db),SQLITE_OK);
+            assert_int_equal(vigil_outbox_open(&f->o,f->path,false),VIGIL_STORE_OK);
+            assert_int_equal(vigil_outbox_begin_run(f->o),VIGIL_STORE_OK);
+        }
+    }
+    free(b);
+}
+static void append_retire_dependency(void **state)
+{
+    struct fixture *f=*state;
+    struct vigil_capture c=capture(2);
+    struct vigil_local_commit id;
+    struct vigil_replay_batch *a=calloc(1,sizeof(*a));
+    assert_non_null(a);
+    print_message("EXPECT: recovered B requests append publication before confirmed A retirement; no generic BUSY cycle, frozen identity retained.\n");
+    assert_int_equal(vigil_outbox_append(f->o,&c,&id),VIGIL_STORE_OK);
+    assert_int_equal(vigil_outbox_peek(f->o,a),VIGIL_STORE_OK);
+    assert_int_equal(setenv("VIGIL_TEST_FAULT","directory_sync",1),0);
+    assert_int_equal(vigil_outbox_append(f->o,&c,&id),VIGIL_STORE_IO_UNKNOWN);
+    assert_int_equal(unsetenv("VIGIL_TEST_FAULT"),0);
+    assert_int_equal(vigil_outbox_retire(f->o,a),VIGIL_STORE_APPEND_PENDING);
+    c.revision=99; /* recovery must use the original capture and bytes */
+    assert_int_equal(vigil_outbox_append(f->o,&c,&id),VIGIL_STORE_OK);
+    assert_int_equal(id.order_id,2); assert_int_equal(id.first_seq,3);
+    assert_int_equal(vigil_outbox_retire(f->o,a),VIGIL_STORE_OK);
+    assert_int_equal(vigil_outbox_peek(f->o,a),VIGIL_STORE_OK);
+    assert_int_equal(a->id.order_id,2); assert_int_equal(a->revision,1);
+    assert_int_equal(vigil_outbox_retire(f->o,a),VIGIL_STORE_OK);
+    struct vigil_outbox_usage u;
+    vigil_outbox_usage(f->o,&u);
+    assert_int_equal(u.records,0); assert_int_equal(u.retired,4);
+    free(a);
+}
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--handoff-only") == 0)
@@ -543,6 +620,8 @@ int main(int argc, char **argv)
     else if (argc != 1)
         return 2;
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test_setup_teardown(retire_reload_nomem, setup, teardown),
+        cmocka_unit_test_setup_teardown(append_retire_dependency, setup, teardown),
         cmocka_unit_test_setup_teardown(retire_storage_faults, setup, teardown),
         cmocka_unit_test_setup_teardown(retire_refuses_conflict, setup, teardown),
         cmocka_unit_test_setup_teardown(retire_fifo_reopen, setup, teardown),

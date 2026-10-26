@@ -27,7 +27,11 @@ Only main changes live alarms or feeds the watchdog. Queue/mailbox locks cover
 bounded copies, never database, filesystem or network I/O. Recovered old-run
 history does not update current sensor truth. SQLite and PG have separate owners
 so remote waits permit further local admission. A local retirement uncertainty
-pauses further mutation until its counters and prefix reconcile.
+pauses further mutation until its counters and prefix reconcile. When retirement
+explicitly identifies an earlier committed append awaiting publication, storage
+publishes that exact held append first, then retries the confirmed retirement.
+This narrow ordering rule and the independent audit repairs are described in
+[RESILIENCE_REMEDIATION.md](RESILIENCE_REMEDIATION.md).
 
 | Evidence state | Allowed crash outcome |
 | --- | --- |
@@ -80,6 +84,11 @@ execution. The complete gate includes all Stage 3 seed schedules, original
 regressions, local/remote crash cuts, real ext4 and systemd, Release, ASan/UBSan,
 TSan, Helgrind, GCC analyzer, decoder fuzz, the production demo and benchmarks.
 TSan's ARM64 `setarch -R` applies to its subprocess tree only.
+The gate also runs 30 deterministic coordinator remediation scenarios per build:
+quiet current/previous-origin recovery, directory-sync and usage-query NOMEM,
+exact publication accounting and reconciliation SIGKILL cuts. Every Python test
+entry refuses `-O` and `PYTHONOPTIMIZE` before fixture work; verification predicates
+raise unconditionally, and negative controls exercise the refusal and bad evidence.
 
 Hosted CI runs `scripts/check-ci --clean`: strict GCC/Clang, unprivileged outbox
 units on a native local filesystem, Python/decoder CLI, disposable PostgreSQL

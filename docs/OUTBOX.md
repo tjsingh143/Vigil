@@ -127,6 +127,16 @@ an error is never a durability acknowledgement. Rollback allocates no visible
 identity. All SQLite return codes, binds, finalizes, checkpoints and syncs are
 checked. A rollback that cannot establish autocommit becomes uncertain I/O.
 
+If confirmed replay A overlaps a committed-but-unpublished append B, retirement
+returns `APPEND_PENDING` before changing A. The storage owner reconciles and
+publishes the same held B, then retries A. B's successful reconciliation clears
+its pending marker, so this dependency cannot repeat after storage recovers.
+Ordinary retirement errors still freeze new mutations. Successful retirement,
+including an already-retired-prefix retry, requires a complete usage reload;
+NOMEM during prepare/step remains a retryable failure and cannot publish stale
+counts. Usage is replaced atomically only after the full query succeeds. See the
+[remediation progress argument and runtime evidence](RESILIENCE_REMEDIATION.md).
+
 | Resource | Bound/policy |
 | --- | --- |
 | Volatile readings | N, default 1024, range 1..65536; oldest pending eviction counted |

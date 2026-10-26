@@ -8,7 +8,7 @@ if [[ ${1:-} == --clean && $# == 1 ]]; then
 elif [[ $# != 0 ]]; then
     echo 'usage: scripts/check-ci [--clean]' >&2; exit 2
 fi
-printf 'EXPECT: strict GCC/Clang builds; 65 C cases per build; seven Python cases; CLI and five v1 and ten v2 PostgreSQL contracts; no sanitizer/analyzer findings; fuzz smoke.\n'
+printf 'EXPECT: strict GCC/Clang builds; 67 C cases per build; Python cases and negative controls; CLI and five v1 and ten v2 PostgreSQL contracts; no sanitizer/analyzer findings; fuzz smoke.\n'
 cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc
 cmake --build build-ci --parallel 2
 ctest --test-dir build-ci -V

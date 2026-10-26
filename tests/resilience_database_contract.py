@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real PostgreSQL v2 contract, independent of daemon and SocketCAN."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import copy
@@ -32,9 +33,9 @@ class ReplayPostgres(Postgres):
         result = subprocess.run(cmd, input="\\set VERBOSITY verbose\nSELECT * FROM vigil.replay_batch(decode('" + raw.hex() + "','hex'));",
                                 text=True, capture_output=True, timeout=8)
         if code:
-            assert result.returncode != 0 and code in result.stderr, (code, result.stderr)
+            require((result.returncode != 0 and code in result.stderr), lambda: ((code, result.stderr)))
         else:
-            assert result.returncode == 0, result.stderr
+            require((result.returncode == 0), lambda: (result.stderr))
         return result.stdout.strip()
 
     def dump(self):
@@ -83,32 +84,32 @@ def main():
         cases.append(name)
     try:
         case('001+002 applied twice; versions 1,2; fsync/full_page_writes/synchronous_commit on')
-        assert pg.sql('SELECT string_agg(version::text,\',\' ORDER BY version) FROM vigil.schema_version')=='1,2'
+        require((pg.sql('SELECT string_agg(version::text,\',\' ORDER BY version) FROM vigil.schema_version')=='1,2'))
         for setting in ('fsync','full_page_writes','synchronous_commit'):
-            assert pg.sql('SHOW '+setting)=='on'
+            require((pg.sql('SHOW '+setting)=='on'))
         case('restricted invoker runtime; no UPDATE/DELETE/DDL, PUBLIC has no new function execution')
-        assert pg.sql("SELECT has_table_privilege('vigil','vigil.replay_receipts','UPDATE'),has_table_privilege('vigil','vigil.run_origins','DELETE'),has_schema_privilege('vigil','vigil','CREATE'),prosecdef FROM pg_proc WHERE oid='vigil.replay_batch(bytea)'::regprocedure")=='f|f|f|f'
-        assert pg.sql("SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN ('vigil.replay_batch(bytea)'::regprocedure,'vigil.validate_replay(bytea)'::regprocedure) AND a.grantee=0 AND a.privilege_type='EXECUTE'")=='0'
+        require((pg.sql("SELECT has_table_privilege('vigil','vigil.replay_receipts','UPDATE'),has_table_privilege('vigil','vigil.run_origins','DELETE'),has_schema_privilege('vigil','vigil','CREATE'),prosecdef FROM pg_proc WHERE oid='vigil.replay_batch(bytea)'::regprocedure")=='f|f|f|f'))
+        require((pg.sql("SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN ('vigil.replay_batch(bytea)'::regprocedure,'vigil.validate_replay(bytea)'::regprocedure) AND a.grantee=0 AND a.privilege_type='EXECUTE'")=='0'))
         case('exact receipt bytes, one run/origin/history/checkpoint; duplicate is equal with identical dump')
         b=payload(); raw=encode(b)
-        assert pg.submit(raw).endswith('|1|1|inserted')
+        require((pg.submit(raw).endswith('|1|1|inserted')))
         before=pg.dump()
-        assert before['replay_receipts'][0]['payload']=='\\x'+raw.hex()
-        assert [len(before[t]) for t in before]==[1,1,1,1,1]
-        assert pg.submit(raw).endswith('|1|1|equal') and pg.dump()==before
+        require((before['replay_receipts'][0]['payload']=='\\x'+raw.hex()))
+        require(([len(before[t]) for t in before]==[1,1,1,1,1]))
+        require((pg.submit(raw).endswith('|1|1|equal') and pg.dump()==before))
         case('same batch changed content or origin is VG001; no partial mutation')
         for field in ('mono_ms','origin'):
             changed=copy.deepcopy(b)
             if field=='origin': changed['origin']['run_token']='a'*64
             else: changed[field]+=1
             pg.submit(changed,'VG001')
-            assert pg.dump()==before
+            require((pg.dump()==before))
         case('different batch/equal history is inserted; unequal history rolls back checkpoint and receipt')
         equal=copy.deepcopy(b); equal['batch_id']=2; equal['order_id']=2
-        assert pg.submit(equal).endswith('|2|1|inserted')
+        require((pg.submit(equal).endswith('|2|1|inserted')))
         before=pg.dump()
         bad=copy.deepcopy(equal); bad['batch_id']=3; bad['records'][0]['detail']['value']=2900
-        pg.submit(bad,'VG001'); assert pg.dump()==before
+        pg.submit(bad,'VG001'); require((pg.dump()==before))
         case('legacy run without origin and checkpoint without receipt are never adopted')
         legacy=payload(); rid=legacy['run_id']
         pg.sql(f"INSERT INTO vigil.runs VALUES('{rid}',to_timestamp(1700000000),100)")
@@ -121,7 +122,7 @@ def main():
             other=payload()
             if key=='run_no': other['origin']['spool_id']=b['origin']['spool_id']
             else: other['origin']['run_token']=b['origin']['run_token']
-            before=pg.dump(); pg.submit(other,'VG001'); assert pg.dump()==before
+            before=pg.dump(); pg.submit(other,'VG001'); require((pg.dump()==before))
         case('malformed/missing/null/range/duplicate-key/invalid UTF8/integer syntax payloads are VG002 and write nothing')
         malformed=[encode(payload()).replace(b'\"mono_ms\":1100',b'\"mono_ms\":11e2'),b'{"x":1,"x":2}',b'\xff',b'{}',b'null',b'x',b' '*160001,
                    encode(payload()).replace(b'"format":2',b'"format":"2"')]
@@ -133,12 +134,12 @@ def main():
         x=payload(); x['reading_drops']=-1; malformed.append(encode(x))
         x=payload(); x['mono_ms']=9223372036854775807; malformed.append(encode(x))
         before=pg.dump()
-        for raw in malformed: pg.submit(raw,'VG002'); assert pg.dump()==before
+        for raw in malformed: pg.submit(raw,'VG002'); require((pg.dump()==before))
         case('two concurrent equal callers return inserted/equal; conflicting batch and event callers have one winner')
         with ThreadPoolExecutor(max_workers=2) as pool:
             c=payload()
             responses=list(pool.map(pg.submit,[c,c]))
-            assert sorted(x.rsplit('|',1)[1] for x in responses)==['equal','inserted']
+            require((sorted(x.rsplit('|',1)[1] for x in responses)==['equal','inserted']))
             c=payload(); d=copy.deepcopy(c); d['mono_ms']+=1
             def attempt(x):
                 cmd=pg.command(); cmd[cmd.index('-U')+1]='vigil'
@@ -147,11 +148,11 @@ def main():
                 if event:
                     c=payload(); d=copy.deepcopy(c); d['batch_id']=2; d['records'][0]['detail']['value']=2900
                 results=list(pool.map(attempt,[c,d]))
-                assert sum(r.returncode==0 for r in results)==1
-                assert 'VG001' in next(r.stderr for r in results if r.returncode)
+                require((sum(r.returncode==0 for r in results)==1))
+                require(('VG001' in next(r.stderr for r in results if r.returncode)))
         case('late PostgreSQL constraint failure rolls back origin/history/checkpoint/receipt as one transaction')
         pg.sql("ALTER TABLE vigil.checkpoints ADD CONSTRAINT test_reject CHECK(kind!='gap') NOT VALID")
-        before=pg.dump(); pg.submit(payload(),'23514'); assert pg.dump()==before
+        before=pg.dump(); pg.submit(payload(),'23514'); require((pg.dump()==before))
         pg.sql('ALTER TABLE vigil.checkpoints DROP CONSTRAINT test_reject')
         result=dict(cases=cases,remote=pg.dump(),malformed_cases=len(malformed))
         if args.output:

@@ -2,6 +2,7 @@
 """Stage 2: real SocketCAN/SQLite/PostgreSQL with handshaked failure boundaries.
 All state native to Linux. Inventories only after daemon death/stop.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import hashlib
@@ -46,8 +47,8 @@ def seed(exe, init, root):
             hook.release(); tokens.append(hook.token())
             kill(d)
         inv=inventory(path,root/'seed')
-        assert len([e for e in committed_records(inv).values() if e['kind']=='reading'])==8
-        assert inv['meta']['retired_records']==0
+        require((len([e for e in committed_records(inv).values() if e['kind']=='reading'])==8))
+        require((inv['meta']['retired_records']==0))
         return path,inv,tokens
     finally: hook.close()
 
@@ -61,34 +62,34 @@ def assert_remote(pg, inv, expected_batches=None):
     for r in receipts:
         raw=bytes.fromhex(r['payload'][2:]); b=json.loads(raw)
         key=(r['run_id'],r['batch_id'])
-        assert key not in batches
+        require((key not in batches))
         batches[key]=raw.decode()
-        assert len(b['records'])==r['record_count']
+        require((len(b['records'])==r['record_count']))
         cp=next(c for c in dump['checkpoints'] if (c['run_id'],c['batch_id'])==key)
-        assert cp['kind']==b['kind'] and cp['reading_drops']==b['reading_drops'] and cp['event_drops']==b['event_drops']
-        assert cp['detail']==b['health'] and cp['alarms']==b['alarms']
+        require((cp['kind']==b['kind'] and cp['reading_drops']==b['reading_drops'] and cp['event_drops']==b['event_drops']))
+        require((cp['detail']==b['health'] and cp['alarms']==b['alarms']))
         origin=next(o for o in dump['run_origins'] if o['run_id']==b['run_id'])
-        assert all(origin[k]==b['origin'][k] for k in ('spool_id','run_no','boot_id','started_ms','started_utc_ms'))
-        assert origin['run_token']=='\\x'+b['origin']['run_token']
+        require((all(origin[k]==b['origin'][k] for k in ('spool_id','run_no','boot_id','started_ms','started_utc_ms'))))
+        require((origin['run_token']=='\\x'+b['origin']['run_token']))
         for e in b['records']:
             event_key=(b['run_id'],e['seq'])
-            assert event_key not in expected, 'duplicate logical history across daemon batches'
+            require((event_key not in expected), lambda: ('duplicate logical history across daemon batches'))
             expected[event_key]=e
     runs={r['run_id'] for r in receipts}
     actual={(h['run_id'],h['seq']):h for h in dump['history'] if h['run_id'] in runs}
-    assert set(actual)==set(expected)
+    require((set(actual)==set(expected)))
     times={(r[0],r[1]):r[2] for r in json.loads(pg.sql("SELECT coalesce(json_agg(json_build_array(run_id,seq,(extract(epoch FROM observed_at)*1000)::bigint)),'[]') FROM vigil.history"))}
     for key,e in expected.items():
         h=actual[key]
-        assert h['monotonic_ms']==e['mono_ms']
-        assert all(h[k]==e[k] for k in ('kind','pod','channel','detail'))
-        assert times[key]==e['utc_ms']
+        require((h['monotonic_ms']==e['mono_ms']))
+        require((all(h[k]==e[k] for k in ('kind','pod','channel','detail'))))
+        require((times[key]==e['utc_ms']))
     if expected_batches:
-        assert all(batches.get((r['run_id'],r['batch_id']))==r['payload'] for r in expected_batches)
-    assert inv['meta']['pending_records']==inv['meta']['pending_batches']==inv['meta']['pending_payload_bytes']==0
-    assert len(actual)==inv['meta']['admitted_records']==inv['meta']['retired_records']
-    assert len(batches)==inv['meta']['last_retired_order']==inv['meta']['next_order_id']-1
-    assert sum(e['kind']=='reading' for e in expected.values())==inv['meta']['admitted_readings']==inv['meta']['retired_readings']
+        require((all(batches.get((r['run_id'],r['batch_id']))==r['payload'] for r in expected_batches)))
+    require((inv['meta']['pending_records']==inv['meta']['pending_batches']==inv['meta']['pending_payload_bytes']==0))
+    require((len(actual)==inv['meta']['admitted_records']==inv['meta']['retired_records']))
+    require((len(batches)==inv['meta']['last_retired_order']==inv['meta']['next_order_id']-1))
+    require((sum(e['kind']=='reading' for e in expected.values())==inv['meta']['admitted_readings']==inv['meta']['retired_readings']))
     return dict(history=len(actual),receipts=len(batches),readings=inv['meta']['retired_readings'],
                 pending=0,remote=dump,local=inv['meta'])
 
@@ -97,13 +98,13 @@ def finish(exe,path,pg,root,old):
     with daemon(exe,path,env=pg.env()) as d:
         done=wait_p(d,caught_up,timeout=40)
         snap=d.wait(lambda s:s['frames']==0)
-        assert source(snap,1,0)['has_value']==0
-        assert done['run_id'] not in {r['run_id'] for r in old}
+        require((source(snap,1,0)['has_value']==0))
+        require((done['run_id'] not in {r['run_id'] for r in old}))
         d.stop()
         local=next(e for e in reversed(d.events) if e['event']=='outbox')
         final=next(e for e in reversed(d.events) if e['event']=='persistence')
-        assert final['abandoned_readings']==final['abandoned_events']==0
-        assert local['local_committed']==final['records_written']
+        require((final['abandoned_readings']==final['abandoned_events']==0))
+        require((local['local_committed']==final['records_written']))
     inv=inventory(path,root/'finished')
     return assert_remote(pg,inv,old)
 
@@ -127,16 +128,16 @@ def cuts(exe,init,root,name,repeats):
             try:
                 with daemon(exe,path,hook) as d:
                     tokens.append(hook.token())
-                    assert pg.sql(f"SELECT encode(payload,'hex') FROM vigil.replay_receipts WHERE run_id='{head['run_id']}' AND batch_id={head['batch_id']}")==head['payload'].encode().hex()
+                    require((pg.sql(f"SELECT encode(payload,'hex') FROM vigil.replay_receipts WHERE run_id='{head['run_id']}' AND batch_id={head['batch_id']}")==head['payload'].encode().hex()))
                     kill(d)
                 after=inventory(path,root/f'after-{i}')
                 if name=='after_retire_commit_before_publish':
-                    assert after['meta']['last_retired_order']==head['order_id']
-                    assert head['order_id'] not in [r['order_id'] for r in after['rows']]
-                    assert after['meta']['retired_records']==before['meta']['retired_records']+head['record_count']
+                    require((after['meta']['last_retired_order']==head['order_id']))
+                    require((head['order_id'] not in [r['order_id'] for r in after['rows']]))
+                    require((after['meta']['retired_records']==before['meta']['retired_records']+head['record_count']))
                 else:
-                    assert after['meta']['last_retired_order']==before['meta']['last_retired_order']
-                    assert next(r for r in after['rows'] if r['order_id']==head['order_id'])['payload']==head['payload']
+                    require((after['meta']['last_retired_order']==before['meta']['last_retired_order']))
+                    require((next(r for r in after['rows'] if r['order_id']==head['order_id'])['payload']==head['payload']))
                 known.update({(r['run_id'],r['batch_id']):r for r in after['rows']})
             finally: hook.close()
         result=finish(exe,path,pg,root,list(known.values()))
@@ -197,7 +198,7 @@ class Withhold:
         return dict(self.pg.env(),VIGIL_DB_HOST='127.0.0.1',VIGIL_DB_PORT=str(self.port),PGSSLMODE='disable')
     def close(self):
         self.stop.set(); self.thread.join(timeout=3); self.listener.close()
-        assert not self.thread.is_alive() and self.error is None,self.error
+        require((not self.thread.is_alive() and self.error is None), lambda: (self.error))
 
 
 def ambiguity(exe,init,root,repeats):
@@ -212,22 +213,22 @@ def ambiguity(exe,init,root,repeats):
             count=proxy.count()
             with daemon(exe,path,env=proxy.env()) as d:
                 wait(d,lambda:proxy.count()>count)
-                assert pg.sql(f"SELECT encode(payload,'hex') FROM vigil.replay_receipts WHERE run_id='{head['run_id']}' AND batch_id={head['batch_id']}")==head['payload'].encode().hex()
+                require((pg.sql(f"SELECT encode(payload,'hex') FROM vigil.replay_receipts WHERE run_id='{head['run_id']}' AND batch_id={head['batch_id']}")==head['payload'].encode().hex()))
                 kill(d)
             after=inventory(path,root/f'kill-{i}')
-            assert after['meta']['retired_records']==0 and after['meta']['last_retired_order']==0
-            assert all(next(r for r in after['rows'] if r['order_id']==b['order_id'])['payload']==b['payload'] for b in old)
+            require((after['meta']['retired_records']==0 and after['meta']['last_retired_order']==0))
+            require((all(next(r for r in after['rows'] if r['order_id']==b['order_id'])['payload']==b['payload'] for b in old)))
             known.update({(r['run_id'],r['batch_id']):r for r in after['rows']})
         count=proxy.count()
         with daemon(exe,path,env=proxy.env()) as d:
             wait(d,lambda:proxy.count()>=count+3,timeout=15)
             status=wait_local(d,lambda s:s['remote_state']=='unknown',timeout=5)
-            assert status['spool_retired']==0
+            require((status['spool_retired']==0))
             kill(d)
         after=inventory(path,root/'same-process')
         known.update({(r['run_id'],r['batch_id']):r for r in after['rows']})
-        assert len(proxy.requests)>=repeats+3
-        assert all(raw==head['payload'].encode() for raw in proxy.requests)
+        require((len(proxy.requests)>=repeats+3))
+        require((all(raw==head['payload'].encode() for raw in proxy.requests)))
         result=finish(exe,path,pg,root,list(known.values()))
         result.update(kills=repeats,identical_attempts=len(proxy.requests),tokens=tokens)
         return result
@@ -245,20 +246,20 @@ def rollback(exe,init,root):
                'CREATE TRIGGER test_pause BEFORE INSERT ON vigil.checkpoints FOR EACH ROW EXECUTE FUNCTION vigil.test_pause()')
         holder=subprocess.Popen(pg.command(),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         holder.stdin.write("SELECT pg_advisory_lock(762190); SELECT 'locked';\n"); holder.stdin.flush()
-        while holder.stdout.readline().strip()!='locked': assert holder.poll() is None
+        while holder.stdout.readline().strip()!='locked': require((holder.poll() is None))
         with daemon(exe,path,env=pg.env()) as d:
             pid=wait(d,lambda:pg.sql("SELECT pid FROM pg_stat_activity WHERE application_name='vigild' AND wait_event='advisory'"))
-            assert pg.sql("SELECT pg_terminate_backend("+pid+")")=='t'
+            require((pg.sql("SELECT pg_terminate_backend("+pid+")")=='t'))
             wait_p(d,lambda s:s['query_failures']>=1)
-            assert pg.sql('SELECT count(*) FROM vigil.history')=='0'
-            assert pg.sql('SELECT count(*) FROM vigil.runs')=='0'
-            assert pg.sql('SELECT count(*) FROM vigil.checkpoints')=='0'
-            assert pg.sql('SELECT count(*) FROM vigil.replay_receipts')=='0'
+            require((pg.sql('SELECT count(*) FROM vigil.history')=='0'))
+            require((pg.sql('SELECT count(*) FROM vigil.runs')=='0'))
+            require((pg.sql('SELECT count(*) FROM vigil.checkpoints')=='0'))
+            require((pg.sql('SELECT count(*) FROM vigil.replay_receipts')=='0'))
             kill(d)
         holder.communicate('SELECT pg_advisory_unlock(762190);\n',timeout=3); holder=None
         pg.sql('DROP TRIGGER test_pause ON vigil.checkpoints; DROP FUNCTION vigil.test_pause()')
         after=inventory(path,root/'rollback')
-        assert after['meta']['last_retired_order']==0
+        require((after['meta']['last_retired_order']==0))
         result=finish(exe,path,pg,root,after['rows'])
         result.update(terminated_backend=int(pid),tokens=tokens)
         return result
@@ -281,19 +282,19 @@ def fairness(exe,init,root):
                     send(raw,reading(1,0,2800,0,n))
                     d.pump(0.002)
                 local=wait_local(d,lambda s:s['local_readings']==64)
-                assert local['spool_retired']==0 and local['durable_pending']>=initial['durable_pending']+64
+                require((local['spool_retired']==0 and local['durable_pending']>=initial['durable_pending']+64))
                 snap=d.wait(lambda s:s['valid_readings']==64 and source(s,1,0)['freshness']=='stale')
-                assert source(snap,1,0)['high']==1 and source(snap,1,0)['current']==0
+                require((source(snap,1,0)['high']==1 and source(snap,1,0)['current']==0))
                 pending=wait_p(d,lambda s:s['degraded']==1)
-                assert pending['persisted_revision']==0
+                require((pending['persisted_revision']==0))
                 hook.release()
                 done=wait_p(d,lambda s:caught_up(s) and s['readings_written']==64,timeout=20)
-                assert done['readings_written']==64 and done['readings_dropped']==0
-                assert done['degraded_transitions']>=2
+                require((done['readings_written']==64 and done['readings_dropped']==0))
+                require((done['degraded_transitions']>=2))
                 d.stop()
             final=inventory(path,root/'finished')
             result=assert_remote(pg,final,inv['rows'])
-            assert result['readings']==72
+            require((result['readings']==72))
             result.update(tokens=tokens,new_readings=64)
             return result
         finally: hook.close()
@@ -318,17 +319,17 @@ def poison(exe,init,root):
                 for n in range(80):
                     send(raw,reading(1,0,2800,0,n)); d.pump(0.002)
                 local=wait_local(d,lambda s:s['local_state']=='full')
-                assert local['replay_attempts']==1 and local['durable_pending']<=20
+                require((local['replay_attempts']==1 and local['durable_pending']<=20))
                 snap=d.wait(lambda s:s['valid_readings']==80 and source(s,1,0)['freshness']=='stale')
-                assert source(snap,1,0)['high']==1
+                require((source(snap,1,0)['high']==1))
                 d.stop()
                 local=next(e for e in reversed(d.events) if e['event']=='outbox')
                 s=next(e for e in reversed(d.events) if e['event']=='persistence')
-                assert local['replay_attempts']==1 and s['readings_dropped']>0
-                assert s['readings_queued']==local['local_readings']+s['readings_dropped']+s['reading_depth']+s['in_flight_readings']
+                require((local['replay_attempts']==1 and s['readings_dropped']>0))
+                require((s['readings_queued']==local['local_readings']+s['readings_dropped']+s['reading_depth']+s['in_flight_readings']))
             after=inventory(path,case/'poisoned')
-            assert after['meta']['retired_records']==0
-            assert after['rows'][0]['payload']==head['payload']
+            require((after['meta']['retired_records']==0))
+            require((after['rows'][0]['payload']==head['payload']))
             # Repair only disposable PG evidence as owner; immutable local bytes stay unchanged.
             if mode=='conflict':
                 pg.sql(f"DELETE FROM vigil.replay_receipts WHERE run_id='{b['run_id']}'; DELETE FROM vigil.checkpoints WHERE run_id='{b['run_id']}'; DELETE FROM vigil.history WHERE run_id='{b['run_id']}'; DELETE FROM vigil.run_origins WHERE run_id='{b['run_id']}'; DELETE FROM vigil.runs WHERE run_id='{b['run_id']}'")
@@ -351,16 +352,16 @@ def outage(exe,init,root):
             for n in range(100):
                 send(raw,reading(1,0,2800,0,n)); d.pump(0.002)
             failed=wait_local(d,lambda s:s['local_state']=='full')
-            assert failed['durable_pending']<=40
+            require((failed['durable_pending']<=40))
             snap=d.wait(lambda s:s['valid_readings']==100 and source(s,1,0)['freshness']=='stale')
-            assert source(snap,1,0)['high']==1
+            require((source(snap,1,0)['high']==1))
             pg.start()
             done=wait_p(d,lambda s:caught_up(s) and s['readings_written']+s['readings_dropped']==100,timeout=45)
-            assert done['readings_queued']==done['readings_written']+done['readings_dropped']==100
-            assert done['degraded_transitions']>=4
+            require((done['readings_queued']==done['readings_written']+done['readings_dropped']==100))
+            require((done['degraded_transitions']>=4))
             rid=done['run_id']
-            assert int(pg.sql(f"SELECT coalesce(sum(reading_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'"))==done['readings_dropped']
-            assert int(pg.sql(f"SELECT coalesce(sum(event_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'"))==done['events_dropped']
+            require((int(pg.sql(f"SELECT coalesce(sum(reading_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'"))==done['readings_dropped']))
+            require((int(pg.sql(f"SELECT coalesce(sum(event_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'"))==done['events_dropped']))
             d.stop()
         inv=inventory(path,root/'finished')
         result=assert_remote(pg,inv)
@@ -380,7 +381,7 @@ def deadlines(exe,init,root):
             if mode=='lock':
                 holder=subprocess.Popen(pg.command(),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 holder.stdin.write("BEGIN; LOCK vigil.history IN ACCESS EXCLUSIVE MODE; SELECT 'locked';\n"); holder.stdin.flush()
-                while holder.stdout.readline().strip()!='locked': assert holder.poll() is None
+                while holder.stdout.readline().strip()!='locked': require((holder.poll() is None))
             elif mode=='statement':
                 pg.sql('CREATE FUNCTION vigil.test_sleep() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$; CREATE TRIGGER test_sleep BEFORE INSERT ON vigil.history FOR EACH ROW EXECUTE FUNCTION vigil.test_sleep()')
             else:
@@ -393,11 +394,11 @@ def deadlines(exe,init,root):
                     code='55P03' if mode=='lock' else '57014'
                     wait_p(d,lambda s:s['last_error']==code)
                 snap=d.wait(lambda s:s['valid_readings']==5 and source(s,1,0)['freshness']=='stale')
-                assert source(snap,1,0)['high']==1
+                require((source(snap,1,0)['high']==1))
                 start=time.monotonic(); d.stop(); elapsed=time.monotonic()-start
-                assert elapsed<1.25,elapsed
+                require((elapsed<1.25), lambda: (elapsed))
             inv=inventory(path,case/'deferred')
-            assert inv['meta']['pending_records']>=5 and inv['meta']['retired_records']==0
+            require((inv['meta']['pending_records']>=5 and inv['meta']['retired_records']==0))
             if holder: holder.communicate('ROLLBACK;\n',timeout=3); holder=None
             if mode=='statement': pg.sql('DROP TRIGGER test_sleep ON vigil.history; DROP FUNCTION vigil.test_sleep()')
             result=finish(exe,path,pg,case,inv['rows']); result['shutdown_s']=elapsed
@@ -428,7 +429,7 @@ def retry_timing(exe,init,root):
                     for i in range(count):
                         end=time.monotonic()+35
                         while not select.select([hook.nr],[],[],0)[0]:
-                            assert time.monotonic()<end,(mode,i,d.events[-4:])
+                            require((time.monotonic()<end), lambda: ((mode,i,d.events[-4:])))
                             if time.monotonic()>=next_send:
                                 send(raw,reading(1,0,2200,0,counter%256)); counter+=1
                                 next_send=time.monotonic()+0.2
@@ -437,10 +438,10 @@ def retry_timing(exe,init,root):
                         hook.release()
                     expected=[1,2,4,8,16,30,30] if mode=='transient' else [30]
                     intervals=[b-a for a,b in zip(stamps,stamps[1:])]
-                    assert all(want<=got<want+1.5 for want,got in zip(expected,intervals)),intervals
+                    require((all(want<=got<want+1.5 for want,got in zip(expected,intervals))), lambda: (intervals))
                     kill(d)
                 inv=inventory(path,case/'pending')
-                assert inv['meta']['retired_records']==0
+                require((inv['meta']['retired_records']==0))
                 if mode=='transient': pg.sql('DROP TRIGGER test_retry ON vigil.checkpoints; DROP FUNCTION vigil.test_retry()')
                 else: pg.sql('GRANT EXECUTE ON FUNCTION vigil.replay_batch(bytea) TO vigil')
                 result=finish(exe,path,pg,case,inv['rows'])
@@ -465,16 +466,16 @@ def maximum_snapshot(exe,init,root):
                     send(raw,heartbeat(pod,1,cycle,cycle))
                 d.wait(lambda s:s['valid_readings']==(cycle+1)*32 and s['heartbeats']==(cycle+1)*16)
             done=wait_p(d,lambda s:caught_up(s) and s['readings_written']==64)
-            assert done['readings_written']==64 and done['readings_dropped']==done['events_dropped']==0
+            require((done['readings_written']==64 and done['readings_dropped']==done['events_dropped']==0))
             d.stop()
         inv=inventory(path,root/'finished')
         result=assert_remote(pg,inv)
         dump=result['remote']
-        assert sum(h['kind']=='heartbeat' for h in dump['history'])==32
+        require((sum(h['kind']=='heartbeat' for h in dump['history'])==32))
         high=[h for h in dump['history'] if h['kind']=='alarm' and h['detail']['kind']=='high']
-        assert len(high)==64 and sum(h['detail']['active'] for h in high)==32
+        require((len(high)==64 and sum(h['detail']['active'] for h in high)==32))
         snapshots=[c['alarms'] for c in dump['checkpoints'] if c['alarms'] is not None]
-        assert all(len(s)==193 and len({(e['pod'],e['channel'],e['detail']['kind']) for e in s})==193 for s in snapshots)
+        require((all(len(s)==193 and len({(e['pod'],e['channel'],e['detail']['kind']) for e in s})==193 for s in snapshots)))
         result.update(snapshot_entries=193,high_raises=32,high_clears=32)
         return result
     finally: pg.close()
@@ -489,23 +490,23 @@ def capabilities(exe,init,root):
             first=wait_p(d,lambda s:s['last_error']=='55000')
             for n in range(5): send(raw,reading(1,0,2200,0,n))
             wait_local(d,lambda s:s['local_readings']==5 and s['replay_attempts']==0)
-            assert pg.sql('SELECT count(*) FROM vigil.history')=='0'
+            require((pg.sql('SELECT count(*) FROM vigil.history')=='0'))
             pg.sql((Path(__file__).resolve().parents[1]/'migrations/002_resilience.sql').read_text())
             pg.sql('GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA vigil TO vigil; GRANT EXECUTE ON FUNCTION vigil.validate_replay(bytea),vigil.replay_batch(bytea) TO vigil')
             for setting in ('fsync','full_page_writes'): pg.sql('ALTER SYSTEM SET '+setting+'=off')
             pg.sql('SELECT pg_reload_conf()')
             wait(d,lambda:pg.sql('SHOW fsync')=='off' and pg.sql('SHOW full_page_writes')=='off')
             second=wait_p(d,lambda s:s['connection_failures']>first['connection_failures'],timeout=35)
-            assert second['last_error']=='55000'
+            require((second['last_error']=='55000'))
             local=wait_local(d,lambda s:s['replay_attempts']==0)
-            assert pg.sql('SELECT count(*) FROM vigil.history')=='0'
-            assert pg.sql('SELECT count(*) FROM vigil.replay_receipts')=='0'
+            require((pg.sql('SELECT count(*) FROM vigil.history')=='0'))
+            require((pg.sql('SELECT count(*) FROM vigil.replay_receipts')=='0'))
             for setting in ('fsync','full_page_writes'): pg.sql('ALTER SYSTEM SET '+setting+'=on')
             pg.sql('SELECT pg_reload_conf()')
             wait(d,lambda:pg.sql('SHOW fsync')=='on' and pg.sql('SHOW full_page_writes')=='on')
             pg.sql('CHECKPOINT')
             done=wait_p(d,lambda s:caught_up(s) and s['readings_written']==5,timeout=35)
-            assert done['readings_written']==5
+            require((done['readings_written']==5))
             d.stop()
         inv=inventory(path,root/'finished')
         result=assert_remote(pg,inv)
@@ -531,14 +532,14 @@ def retirement_accounting(exe,init,root):
                 if e['event']=='persistence': previous=e
                 if e['event']=='outbox' and previous:
                     pairs+=1; uncertainty+=e['local_state']=='recovering'
-                    assert e['spool_admitted']==e['durable_pending']+e['spool_retired']
-                    assert e['spool_retired']==previous['records_written']
-                    assert e['local_committed']==e['durable_pending']+previous['records_written']
-                    assert previous['readings_queued']==e['local_readings']+previous['readings_dropped']+previous['reading_depth']+previous['in_flight_readings']
-            assert pairs>1 and uncertainty>0
+                    require((e['spool_admitted']==e['durable_pending']+e['spool_retired']))
+                    require((e['spool_retired']==previous['records_written']))
+                    require((e['local_committed']==e['durable_pending']+previous['records_written']))
+                    require((previous['readings_queued']==e['local_readings']+previous['readings_dropped']+previous['reading_depth']+previous['in_flight_readings']))
+            require((pairs>1 and uncertainty>0))
         inv=inventory(path,root/'uncertain')
         result=finish(exe,path,pg,root,inv['rows'])
-        assert result['readings']==12
+        require((result['readings']==12))
         result.update(consistent_status_pairs=pairs,uncertainty_samples=uncertainty)
         return result
     finally: pg.close()
@@ -548,7 +549,7 @@ def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--build',type=Path,required=True); ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--restarts',type=int,default=20)
     ap.add_argument('--timing',action='store_true')
-    args=ap.parse_args(); assert args.restarts>=1
+    args=ap.parse_args(); require((args.restarts>=1))
     build=args.build.resolve(); args.output.mkdir(parents=True,exist_ok=False)
     native=Path(tempfile.mkdtemp(prefix='vigil-stage2-evidence-'))
     os.environ['VIGIL_EVIDENCE_DIR']=str(args.output.resolve())

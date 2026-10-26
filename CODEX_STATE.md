@@ -1,3 +1,41 @@
+# Vigil Resilience — audit remediation checkpoint complete
+
+**F1–F4 resolved; ready for a fresh independent Astra Max audit. STOP.**
+One Codex agent; no delegation, push, tag, publication, deployment or portfolio.
+Started at clean `8a7347c6b940df24d0e5536d5c1f5e60272a07ef`. The rejected
+Stage 4 candidate and original audit artifacts remain preserved below.
+
+Repaired implementation SHA-256: `353462a3e1bd7db82284adfbba09e81ad903c5a5540e7f964f42fc6843c96e06`.
+The repaired candidate is the local commit containing this checkpoint; exact
+commit identity is retained in `artifacts/remediation-20261025/commit-receipt.json`.
+Full results, root causes, progress argument, file map, failed controls and limits:
+[remediation report](docs/RESILIENCE_REMEDIATION.md). This is author verification, not independent approval.
+
+Final clean Linux gate: **72/72 commands, exit 0**, 2026-10-26T08:12:39.408187+00:00.
+Raw: `artifacts/remediation-final-gate-3/`; all 17 native roots archived and checked.
+67 C cases/build, 13 Python cases, 120 coordinator scenarios/64 reconciliation
+SIGKILL cuts; real vcan/ext4/systemd, SQL v1/v2, old regressions/72 seed executions,
+ASan/UBSan/TSan, scoped Helgrind, analyzer, fuzz, demo and matched benchmarks pass.
+All 2,331 original audit files are unchanged.
+
+The first complete gate also passed; its host logs survive, but VM reboot removed
+its /tmp inventories before archival. A second attempt failed vcan setup under
+the newer booted kernel; its documented module prerequisite was restored. Both
+attempts remain recorded. The final rerun changed no source/check/deadline and
+used persistent native storage with automatic archival. No known release blocker
+remains; hardware power cuts, physical CAN, XFS, failover, exhaustive OOM/entropy
+and asynchronous per-record/lock timing remain outside qualification.
+
+Final median remote window rate: 83.86/s
+versus original 100.01/s at 100/s offered;
+local admission 99.98/s. The slower first
+repaired run (74.37/s remote) remains visible. No indefinite 100/s remote claim.
+Next step: independent re-verification of this repaired commit. No publication.
+
+---
+
+# Historical Stage 4 candidate (rejected by independent audit)
+
 # Current work — Resilience Stage 4 RELEASE CANDIDATE
 
 **Complete for independent-review handoff; not independently verified. STOP.**

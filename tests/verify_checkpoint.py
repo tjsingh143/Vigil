@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run the complete local checkpoint and render a report only from observed results."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 import json
 import os
@@ -22,44 +23,44 @@ def render(directory, report):
     faults = json.loads((directory / 'scenarios/results.json').read_text())
     demo = json.loads((directory / 'demo/results.json').read_text())
     manual = json.loads((directory / 'manual/results.json').read_text())
-    assert (faults['passed'], faults['failed']) == (10, 0)
-    assert (demo['passed'], demo['failed']) == (1, 0)
-    assert (manual['passed'], manual['failed']) == (1, 0)
+    require(((faults['passed'], faults['failed']) == (10, 0)))
+    require(((demo['passed'], demo['failed']) == (1, 0)))
+    require(((manual['passed'], manual['failed']) == (1, 0)))
     cases = {case['name']: case['measurements'] for case in faults['scenarios']}
     builds = ('build', 'build-sanitize', 'build-tsan', 'build-ci', 'build-ci-sanitize', 'build-release')
     counts = {}
     for build in builds:
         log = (ROOT / build / 'Testing/Temporary/LastTest.log').read_text()
         counts[build] = [int(n) for n in re.findall(r'\[\s+PASSED\s+\]\s+(\d+) test', log)]
-        assert counts[build] == [13, 26, 6], (build, counts[build])
+        require((counts[build] == [13, 26, 6]), lambda: ((build, counts[build])))
         shutil.copyfile(ROOT / build / 'Testing/Temporary/LastTest.log', directory / f'{build}-ctest.log')
     local = (directory / 'local.log').read_text()
     ci = (directory / 'ci.log').read_text()
-    assert 'ERROR SUMMARY: 0 errors' in local
-    assert len(re.findall('PASS Checkpoint 1 integration:', local)) == 2
-    assert len(re.findall('PASS Checkpoint 2 integration:', local)) == 2
-    assert len(re.findall('PASS Checkpoint 3 integration:', local)) == 3
-    assert 'database contract 5/5' in ci
-    assert 'Ran 7 tests' in local and 'Ran 7 tests' in ci
+    require(('ERROR SUMMARY: 0 errors' in local))
+    require((len(re.findall('PASS Checkpoint 1 integration:', local)) == 2))
+    require((len(re.findall('PASS Checkpoint 2 integration:', local)) == 2))
+    require((len(re.findall('PASS Checkpoint 3 integration:', local)) == 3))
+    require(('database contract 5/5' in ci))
+    require(('Ran 7 tests' in local and 'Ran 7 tests' in ci))
     hardening = {}
     for variant in ('release', 'sanitize', 'tsan'):
         result = json.loads((directory / f'hardening-{variant}/results.json').read_text())
-        assert (result['passed'], result['failed']) == (5, 0)
+        require(((result['passed'], result['failed']) == (5, 0)))
         hardening[variant] = {case['name']: case['measurements'] for case in result['scenarios']}
     release = (directory / 'release.log').read_text()
-    assert all(name in release for name in ('PASS Checkpoint 1 integration:',
-                                           'PASS Checkpoint 2 integration:', 'PASS Checkpoint 3 integration:'))
+    require((all(name in release for name in ('PASS Checkpoint 1 integration:',
+                                           'PASS Checkpoint 2 integration:', 'PASS Checkpoint 3 integration:'))))
     fuzz = (directory / 'fuzz/fuzzer.log').read_text()
     total = re.search(r'Done (\d+) runs in (\d+) second', fuzz)
-    assert total, 'missing successful libFuzzer completion'
+    require((total), lambda: ('missing successful libFuzzer completion'))
     fuzz_runs, fuzz_seconds = map(int, total.groups())
     peak = int(re.search(r'stat::peak_rss_mb:\s+(\d+)', fuzz)[1])
     story = demo['scenarios'][0]['measurements']
     history = json.loads((directory / 'demo/interview/history.json').read_text())
     checkpoints = json.loads((directory / 'demo/interview/checkpoints.json').read_text())
-    assert sum(row['kind'] == 'reading' for row in history) == story['total_written'] == 12
-    assert sum(row['reading_drops'] for row in checkpoints) == story['dropped'] == 7
-    assert all(row['observed_at'] and row['monotonic_ms'] > 0 for row in history)
+    require((sum(row['kind'] == 'reading' for row in history) == story['total_written'] == 12))
+    require((sum(row['reading_drops'] for row in checkpoints) == story['dropped'] == 7))
+    require((all(row['observed_at'] and row['monotonic_ms'] > 0 for row in history)))
     report['observed_counts'] = dict(c_cases=counts, python_cases_per_invocation=7,
                                    fault_cases=10, database_contract_cases=5,
                                    hardening_cases_per_variant=5, hardening_variants=3,
@@ -199,7 +200,7 @@ def main():
             traffic = bus.recv(16)
         except TimeoutError:
             traffic = None
-        assert traffic is None, 'vcan0 is busy; stop other simulators before the gate'
+        require((traffic is None), lambda: ('vcan0 is busy; stop other simulators before the gate'))
     commands = [
         ('local', ['./scripts/check', '--clean']),
         ('ci', ['./scripts/check-ci', '--clean']),
@@ -244,7 +245,7 @@ def main():
         save()
         if entry['exit_code'] != 0:
             raise RuntimeError(f"{name} failed, see {directory / (name + '.log')}")
-    assert source_digest() == report['source_sha256'], 'implementation changed during gate'
+    require((source_digest() == report['source_sha256']), lambda: ('implementation changed during gate'))
     report['ended_utc'] = utc()
     render(directory, report)
     save()

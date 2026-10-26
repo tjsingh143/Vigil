@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """An asserted, narrated interview story. Uses only its own disposable database."""
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 import json
 import os
@@ -37,18 +38,18 @@ def story(executable):
                     send(raw, frame)
                 healthy = d.wait(lambda s: s['frames'] == 3 * (tick + 1))
                 view("healthy", healthy)
-            assert all(source(healthy, 1, c)['current'] for c in (0, 1))
+            require((all(source(healthy, 1, c)['current'] for c in (0, 1))))
             say("2. POD STOPS: leave the bus silent; timeout=500 ms, tick=20 ms.")
             stale = d.wait(lambda s: s['now_ms'] > healthy['now_ms'] and
                            all(source(s, 1, c)['freshness'] == 'stale' for c in (0, 1))
                            and pod_status(s, 1)['heartbeat'] == 'stale')
-            assert source(stale, 1, 0)['current'] == 0
+            require((source(stale, 1, 0)['current'] == 0))
             alarm = next(e for e in d.events if e['event'] == 'alarm'
                          and e['kind'] == 'communication_lost' and e['pod'] == 1
                          and e['channel'] == 0 and e['state'] == 'active'
                          and e['now_ms'] > healthy['now_ms'])
             age = alarm['now_ms'] - source(stale, 1, 0)['last_valid_ms']
-            assert 500 <= age <= 720
+            require((500 <= age <= 720))
             view("stale", stale)
             say(f"communication_lost raised_ms={alarm['now_ms']} detection_age_ms={age}; "
                 "last value is retained with current=0.")
@@ -56,13 +57,13 @@ def story(executable):
             for frame in Pod(1).cycle(0, 0):
                 send(raw, frame)
             returned = d.wait(lambda s: s['frames'] == 12 and s['recoveries'] >= 3)
-            assert all(source(returned, 1, c)['current'] for c in (0, 1))
+            require((all(source(returned, 1, c)['current'] for c in (0, 1))))
             view("returned", returned)
             before = wait_p(d, lambda p: p['readings_written'] == 8 and caught_up(p))
             rid = before['run_id']
-            assert before['gap_markers'] == 0
+            require((before['gap_markers'] == 0))
             prior_values = readings(pg, rid)
-            assert prior_values == [2200, 0, 2201, 0, 2202, 0, 2200, 0]
+            require((prior_values == [2200, 0, 2201, 0, 2202, 0, 2200, 0]))
             say(f"SQL before outage: run={rid} readings=8 gaps=0.")
             say("4. DATABASE STOPS: stop only this disposable PostgreSQL cluster; monitoring stays running.")
             pg.stop()
@@ -74,36 +75,36 @@ def story(executable):
             for counter in range(2, 13):
                 send(raw, reading(1, 0, 2800 + counter, 0, counter))
                 live = d.wait(lambda s: s['frames'] == 13 + counter - 2)
-                assert source(live, 1, 0)['current'] == 1 and source(live, 1, 0)['high'] == 1
+                require((source(live, 1, 0)['current'] == 1 and source(live, 1, 0)['high'] == 1))
                 if counter in (2, 5, 12):
                     view("database down, monitoring live", live)
             queued = wait_p(d, lambda p: p['readings_queued'] == 19)
-            assert queued['reading_depth'] == 4 and queued['readings_dropped'] == 7
-            assert queued['in_flight_readings'] == 0 and queued['degraded'] == 1
+            require((queued['reading_depth'] == 4 and queued['readings_dropped'] == 7))
+            require((queued['in_flight_readings'] == 0 and queued['degraded'] == 1))
             say(f"Queue observed_ms={queued['now_ms']}: total_queued=19 already_written=8 "
                 "pending=4 dropped=7 in_flight_readings=0. Newest four retained.")
             down_stale = d.wait(lambda s: s['frames'] == 23 and source(s, 1, 0)['freshness'] == 'stale')
-            assert source(down_stale, 1, 0)['current'] == 0 and source(down_stale, 1, 0)['high'] == 1
+            require((source(down_stale, 1, 0)['current'] == 0 and source(down_stale, 1, 0)['high'] == 1))
             view("timeout still works during database outage", down_stale)
             say("6. DATABASE RETURNS: backfill the four retained readings and record the seven-record gap.")
             pg.start()
             done = wait_p(d, lambda p: p['readings_written'] == 12 and caught_up(p))
             sql_values = readings(pg, rid)
-            assert sql_values == prior_values + [2809, 2810, 2811, 2812], sql_values
+            require((sql_values == prior_values + [2809, 2810, 2811, 2812]), lambda: (sql_values))
             gaps = json.loads(pg.sql(f"SELECT json_agg(x ORDER BY batch_id) FROM "
                                     f"(SELECT * FROM vigil.checkpoints WHERE run_id='{rid}' AND kind='gap') x"))
-            assert sum(g['reading_drops'] for g in gaps) == 7
-            assert sum(g['event_drops'] for g in gaps) == 0
+            require((sum(g['reading_drops'] for g in gaps) == 7))
+            require((sum(g['event_drops'] for g in gaps) == 0))
             alarms = current_alarms(pg, rid)
             high = next(a for a in alarms if a['pod'] == 1 and a['channel'] == 0 and a['detail']['kind'] == 'high')
-            assert high['detail']['active']
+            require((high['detail']['active']))
             say(f"RECOVERED observed_ms={done['now_ms']} outage_ms={done['last_outage_ms']} "
                 f"written=12 dropped=7 pending=0 gaps={done['gap_markers']} degraded=0.")
             say(f"SQL retained outage values={sql_values[-4:]}; gap reading_drops=7 event_drops=0; "
                 "high alarm remains active until a cooler valid reading arrives.")
             d.stop()
             final = latest(d)
-            assert final['abandoned_readings'] == final['abandoned_events'] == 0
+            require((final['abandoned_readings'] == final['abandoned_events'] == 0))
             for name, query in (
                 ('history', f"SELECT * FROM vigil.history WHERE run_id='{rid}' ORDER BY seq"),
                 ('checkpoints', f"SELECT * FROM vigil.checkpoints WHERE run_id='{rid}' ORDER BY batch_id")):

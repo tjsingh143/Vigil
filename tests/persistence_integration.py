@@ -2,6 +2,7 @@
 """Real PostgreSQL + SocketCAN + systemd gate; expectations in CP3 verification.
 Creates/stops/removes only its own disposable cluster. Never touches 16/main.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import json
@@ -103,7 +104,7 @@ def wait_p(d, predicate, timeout=10):
         d.pump(0.03)
         s = latest(d)
         if s and predicate(s):
-            assert all(snap["rx_overflow"] == 0 for snap in d.snapshots)
+            require((all(snap["rx_overflow"] == 0 for snap in d.snapshots)))
             return s
     raise AssertionError(f"persistence deadline: {latest(d)}")
 
@@ -113,7 +114,7 @@ def daemon(executable, pg, capacity=16, env=None):
     d = Daemon(executable, config_text(pods=(1,), timeout=500, status=200, rate=0),
                persistence=True, extra_args=("--queue-capacity", str(capacity)), env=env or pg.env())
     try:
-        assert len(list(Path(f"/proc/{d.child.pid}/task").iterdir())) >= 2  # TSan adds a runtime thread
+        require((len(list(Path(f"/proc/{d.child.pid}/task").iterdir())) >= 2))  # TSan adds a runtime thread
         yield d
     finally:
         d.close()
@@ -140,9 +141,9 @@ def assert_current(pg, rid, high=True, communication=True):
     def active(pod, ch, kind):
         return next(a["detail"]["active"] for a in alarms
                     if a["pod"] == pod and a["channel"] == ch and a["detail"]["kind"] == kind)
-    assert active(1, 0, "high") == high, alarms
-    assert active(1, 0, "communication_lost") == communication, alarms
-    assert not active(0, -3, "persistence_degraded"), alarms
+    require((active(1, 0, "high") == high), lambda: (alarms))
+    require((active(1, 0, "communication_lost") == communication), lambda: (alarms))
+    require((not active(0, -3, "persistence_degraded")), lambda: (alarms))
 
 
 def history_fields(executable, pg):
@@ -156,17 +157,17 @@ def history_fields(executable, pg):
             send(raw, (can_id, payload[:-1] + bytes([payload[-1] ^ 1])))
             send(raw, reading(1, 0, 9000, 0, 1))
         snap = d.wait(lambda s: s["frames"] == 4)
-        assert source(snap, 1, 0)["value"] == 2200 and source(snap, 1, 0)["current"] == 0
+        require((source(snap, 1, 0)["value"] == 2200 and source(snap, 1, 0)["current"] == 0))
         done = wait_p(d, lambda s: s["readings_written"] == 1 and caught_up(s))
         rows = json.loads(pg.sql("SELECT json_agg(x ORDER BY seq) FROM "
                           f"(SELECT * FROM vigil.history WHERE run_id='{done['run_id']}' "
                           "AND kind <> 'alarm') x"))
-        assert [r["kind"] for r in rows] == ["reading", "heartbeat", "rejected", "rejected"]
-        assert rows[0]["pod"] == 1 and rows[0]["channel"] == 0 and rows[0]["detail"]["valid"]
-        assert rows[1]["detail"]["uptime_s"] == 42 and not rows[1]["detail"]["stale"]
-        assert rows[2]["detail"]["reason"] == "crc" and not rows[2]["detail"]["decoded"]
-        assert rows[3]["detail"]["reason"] == "range" and not rows[3]["detail"]["valid"]
-        assert all(r["observed_at"] and r["monotonic_ms"] > 0 for r in rows)
+        require(([r["kind"] for r in rows] == ["reading", "heartbeat", "rejected", "rejected"]))
+        require((rows[0]["pod"] == 1 and rows[0]["channel"] == 0 and rows[0]["detail"]["valid"]))
+        require((rows[1]["detail"]["uptime_s"] == 42 and not rows[1]["detail"]["stale"]))
+        require((rows[2]["detail"]["reason"] == "crc" and not rows[2]["detail"]["decoded"]))
+        require((rows[3]["detail"]["reason"] == "range" and not rows[3]["detail"]["valid"]))
+        require((all(r["observed_at"] and r["monotonic_ms"] > 0 for r in rows)))
         d.stop()
         print("PASS SQL history: identity/channel, reading/heartbeat, CRC/range reasons, validity, UTC/monotonic timestamps")
 
@@ -179,7 +180,7 @@ def outage(executable, pg, overflow):
         inject(0, 2)
         baseline = wait_p(d, lambda s: s["readings_written"] == 2 and s["in_flight_readings"] == 0)
         rid = baseline["run_id"]
-        assert readings(pg, rid) == [2800, 2801]
+        require((readings(pg, rid) == [2800, 2801]))
         pg.stop()
         wait_p(d, lambda s: not s["connected"] and s["connection_failures"] >= 1
                         and s["in_flight_readings"] == 0)
@@ -187,37 +188,37 @@ def outage(executable, pg, overflow):
         inject(2, count, base=base)
         full = wait_p(d, lambda s: s["readings_queued"] == count + 2)
         expected_drop = max(0, count - cap)
-        assert full["reading_depth"] == min(count, cap), full
-        assert full["readings_dropped"] == expected_drop and full["degraded"] == 1, full
+        require((full["reading_depth"] == min(count, cap)), lambda: (full))
+        require((full["readings_dropped"] == expected_drop and full["degraded"] == 1), lambda: (full))
         stale = d.wait(lambda s: s["frames"] == count + 2 and s["stale_events"] >= 3
                        and source(s, 1, 0)["freshness"] == "stale")
-        assert source(stale, 1, 0)["high"] == int(overflow)
+        require((source(stale, 1, 0)["high"] == int(overflow)))
         timeout_age = stale["now_ms"] - source(stale, 1, 0)["last_valid_ms"]
-        assert 500 <= timeout_age <= 1000, timeout_age
+        require((500 <= timeout_age <= 1000), lambda: (timeout_age))
         alarm_age = min(e["now_ms"] - source(stale, 1, 0)["last_valid_ms"]
                         for e in d.events if e["event"] == "alarm" and e["pod"] == 1
                         and e["channel"] == 0 and e["kind"] == "communication_lost"
                         and e["state"] == "active" and e["now_ms"] >= source(stale, 1, 0)["last_valid_ms"])
-        assert 500 <= alarm_age <= 720, alarm_age
+        require((500 <= alarm_age <= 720), lambda: (alarm_age))
         pg.start()
         done = wait_p(d, lambda s: s["readings_written"] == 2 + min(count, cap)
                       and caught_up(s))
-        assert readings(pg, rid) == [2800, 2801] + list(range(base + 2 + expected_drop, base + 2 + count))
+        require((readings(pg, rid) == [2800, 2801] + list(range(base + 2 + expected_drop, base + 2 + count))))
         gaps = pg.sql(f"SELECT coalesce(sum(reading_drops),0),coalesce(sum(event_drops),0) "
                       f"FROM vigil.checkpoints WHERE run_id='{rid}'")
-        assert gaps == f"{expected_drop}|0", gaps
-        assert (done["gap_markers"] > 0) == overflow, done
+        require((gaps == f"{expected_drop}|0"), lambda: (gaps))
+        require(((done["gap_markers"] > 0) == overflow), lambda: (done))
         assert_current(pg, rid, high=overflow)
         times = pg.sql(f"SELECT (detail->>'outage_ended_ms')::bigint-"
                        f"(detail->>'outage_started_ms')::bigint FROM vigil.checkpoints "
                        f"WHERE run_id='{rid}' ORDER BY batch_id DESC LIMIT 1")
-        assert int(times) == done["last_outage_ms"], (times, done)
+        require((int(times) == done["last_outage_ms"]), lambda: ((times, done)))
         lifecycle = pg.sql(f"SELECT count(*) FROM vigil.history WHERE run_id='{rid}' "
                           "AND kind='alarm' AND detail->>'kind'='persistence_degraded'")
-        assert int(lifecycle) >= 2
+        require((int(lifecycle) >= 2))
         d.stop()
         final = latest(d)
-        assert final["abandoned_readings"] == final["abandoned_events"] == 0, final
+        require((final["abandoned_readings"] == final["abandoned_events"] == 0), lambda: (final))
         print(f"PASS {'overflow' if overflow else 'backfill'}: capacity={cap} outage_readings={count} "
               f"dropped={expected_drop} retained={min(count,cap)} alarm_age_ms={alarm_age} "
               f"outage_ms={done['last_outage_ms']} reconnects={done['reconnects']} gaps={done['gap_markers']}")
@@ -248,15 +249,15 @@ def slow_query(executable, pg):
             inject(0, 8)
             failed = wait_p(d, lambda s: s["query_failures"] >= 1)
             snap = d.wait(lambda s: s["valid_readings"] == 8 and s["stale_events"] == 3)
-            assert source(snap, 1, 0)["current"] == 0
-            assert failed["readings_dropped"] == 0 and str(failed["last_error"]) == "55P03"
+            require((source(snap, 1, 0)["current"] == 0))
+            require((failed["readings_dropped"] == 0 and str(failed["last_error"]) == "55P03"))
         finally:
             pg.sql("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='vigil-test-lock'")
             locker.wait(timeout=3)
             locker.stdout.close()
             locker.stderr.close()
         done = wait_p(d, lambda s: s["readings_written"] == 8 and caught_up(s))
-        assert readings(pg, done["run_id"]) == list(range(2800, 2808))
+        require((readings(pg, done["run_id"]) == list(range(2800, 2808))))
         d.stop()
         print(f"PASS locked PostgreSQL: query_failures={done['query_failures']}, 8 readings backfilled, 3 live timeouts")
 
@@ -317,8 +318,8 @@ class LostResponseProxy:
         self.stop.set()
         self.thread.join(timeout=3)
         self.listener.close()
-        assert not self.thread.is_alive()
-        assert self.error is None, self.error
+        require((not self.thread.is_alive()))
+        require((self.error is None), lambda: (self.error))
 
 
 def lost_response(executable, pg):
@@ -330,11 +331,11 @@ def lost_response(executable, pg):
             wait_p(d, lambda s: caught_up(s))
             inject(0, 5)
             failed = wait_p(d, lambda s: s["query_failures"] >= 1)
-            assert proxy.dropped.is_set()
-            assert len(readings(pg, failed["run_id"])) > 0  # committed despite missing ack
+            require((proxy.dropped.is_set()))
+            require((len(readings(pg, failed["run_id"])) > 0))  # committed despite missing ack
             done = wait_p(d, lambda s: s["readings_written"] == 5 and caught_up(s))
-            assert readings(pg, done["run_id"]) == list(range(2800, 2805))
-            assert done["readings_dropped"] == 0
+            require((readings(pg, done["run_id"]) == list(range(2800, 2805))))
+            require((done["readings_dropped"] == 0))
             d.stop()
         print("PASS lost COMMIT response: real DB committed, same batch retried, exactly 5 rows and 5 acknowledged readings")
     finally:
@@ -352,12 +353,12 @@ def statement_timeout(executable, pg):
         try:
             inject(0, 3)
             failed = wait_p(d, lambda s: s["query_failures"] >= 1)
-            assert str(failed["last_error"]) == "57014", failed
+            require((str(failed["last_error"]) == "57014"), lambda: (failed))
             d.wait(lambda s: s["valid_readings"] == 3 and s["stale_events"] == 3)
         finally:
             pg.sql("DROP TRIGGER test_slow ON vigil.history; DROP FUNCTION vigil.test_sleep()")
         done = wait_p(d, lambda s: s["readings_written"] == 3 and caught_up(s))
-        assert readings(pg, done["run_id"]) == [2800, 2801, 2802]
+        require((readings(pg, done["run_id"]) == [2800, 2801, 2802]))
         d.stop()
         print("PASS server statement_timeout: SQLSTATE=57014, monitoring/timeouts continued, 3 rows backfilled")
 
@@ -376,17 +377,17 @@ def event_overflow(executable, pg):
                     # bounded burst so sanitizer overhead cannot overflow RX.
                     d.wait(lambda s: s["valid_readings"] >= i + 1)
         full = wait_p(d, lambda s: s["readings_queued"] == 300)
-        assert full["readings_dropped"] == 296 and full["event_depth"] == 256, full
-        assert full["events_dropped"] > 0 and full["degraded"] == 1, full
-        assert full["readings_queued"] == full["readings_written"] + full["readings_dropped"] + full["reading_depth"] + full["in_flight_readings"]
+        require((full["readings_dropped"] == 296 and full["event_depth"] == 256), lambda: (full))
+        require((full["events_dropped"] > 0 and full["degraded"] == 1), lambda: (full))
+        require((full["readings_queued"] == full["readings_written"] + full["readings_dropped"] + full["reading_depth"] + full["in_flight_readings"]))
         pg.start()
         done = wait_p(d, lambda s: caught_up(s))
         rid = done["run_id"]
         lost = pg.sql(f"SELECT sum(reading_drops),sum(event_drops) FROM vigil.checkpoints WHERE run_id='{rid}'")
-        assert lost == f"296|{done['events_dropped']}", (lost, done)
+        require((lost == f"296|{done['events_dropped']}"), lambda: ((lost, done)))
         alarms = current_alarms(pg, rid)
-        assert any(a["pod"] == 1 and a["channel"] == 1 and a["detail"]["kind"] == "high"
-                   and a["detail"]["active"] for a in alarms), alarms
+        require((any(a["pod"] == 1 and a["channel"] == 1 and a["detail"]["kind"] == "high"
+                   and a["detail"]["active"] for a in alarms)), lambda: (alarms))
         d.stop()
         print(f"PASS event overflow: 300 readings, reading_drops=296, exact event_drops={done['events_dropped']}, current door alarm recovered")
 
@@ -401,12 +402,12 @@ def blackhole(executable, pg):
             inject(0, 3)
             d.wait(lambda s: s["valid_readings"] == 3 and s["stale_events"] == 3)
             failed = wait_p(d, lambda s: s["connection_failures"] >= 1)
-            assert failed["connection_failures"] <= 2, failed
+            require((failed["connection_failures"] <= 2), lambda: (failed))
             start = time.monotonic()
             d.stop()
             elapsed = time.monotonic() - start
-            assert elapsed < 1.5, elapsed
-            assert latest(d)["abandoned_readings"] == 3
+            require((elapsed < 1.5), lambda: (elapsed))
+            require((latest(d)["abandoned_readings"] == 3))
             print(f"PASS unresponsive TCP: connect deadline, live monitoring, shutdown_s={elapsed:.3f}, abandoned=3")
 
 
@@ -421,15 +422,15 @@ def crash(executable, pg):
         wait_p(d, lambda s: not s["connected"] and s["connection_failures"] >= 1 and s["in_flight_readings"] == 0)
         inject(2, 3)
         pending = wait_p(d, lambda s: s["reading_depth"] == 3)
-        assert pending["readings_dropped"] == 0 and pending["readings_written"] == 2
+        require((pending["readings_dropped"] == 0 and pending["readings_written"] == 2))
         d.child.kill()
-        assert d.child.wait(timeout=2) == -signal.SIGKILL
+        require((d.child.wait(timeout=2) == -signal.SIGKILL))
     pg.start()
-    assert readings(pg, rid) == [2800, 2801]
+    require((readings(pg, rid) == [2800, 2801]))
     with daemon(executable, pg) as d:
         new = wait_p(d, lambda s: caught_up(s))
-        assert new["run_id"] != rid and new["readings_queued"] == 0
-        assert readings(pg, new["run_id"]) == []
+        require((new["run_id"] != rid and new["readings_queued"] == 0))
+        require((readings(pg, new["run_id"]) == []))
         d.stop()
     print("PASS SIGKILL outage: exactly 3 known unpersisted readings lost; 2 prior rows remain; new run has no invented backfill")
 
@@ -438,10 +439,10 @@ def systemd_gate(executable, pg):
     """Exercise actual unit sandbox/User/notify/watchdog/restart on Linux PID 1."""
     unit = "vigil-evidence.service"
     dest = Path("/usr/local/libexec/vigil-evidence")
-    assert not dest.exists(), "test service directory already exists"
+    require((not dest.exists()), lambda: ("test service directory already exists"))
     unit_path = Path("/run/systemd/system") / unit
     journal_since = f"@{time.time():.6f}"
-    assert not unit_path.exists(), "test unit already exists"
+    require((not unit_path.exists()), lambda: ("test unit already exists"))
     run(["sudo", "install", "-d", "-m", "0755", str(dest)])
     try:
         if subprocess.run(["id", "vigil"], capture_output=True).returncode != 0:
@@ -464,11 +465,11 @@ def systemd_gate(executable, pg):
         run(["sudo", "systemctl", "start", unit])
         def prop(name):
             return run(["systemctl", "show", unit, f"--property={name}", "--value"]).stdout.strip()
-        assert prop("ActiveState") == "active" and prop("SubState") == "running"
+        require((prop("ActiveState") == "active" and prop("SubState") == "running"))
         pid = int(prop("MainPID"))
         uid = run(["id", "-u", "vigil"]).stdout.strip()
-        assert f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}" in Path(f"/proc/{pid}/status").read_text()
-        assert int(prop("WatchdogTimestampMonotonic")) > 0
+        require((f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}" in Path(f"/proc/{pid}/status").read_text()))
+        require((int(prop("WatchdogTimestampMonotonic")) > 0))
         def service_status(service_pid, predicate, timeout=10):
             deadline = time.monotonic() + timeout
             last = None
@@ -487,19 +488,19 @@ def systemd_gate(executable, pg):
         inject(0, 2)
         baseline = service_status(pid, lambda s: s["readings_written"] == 2 and caught_up(s))
         rid = baseline["run_id"]
-        assert readings(pg, rid) == [2800, 2801]
+        require((readings(pg, rid) == [2800, 2801]))
         # Enough time to exceed one watchdog interval: healthy main keeps it alive.
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             time.sleep(0.2)
-            assert int(prop("MainPID")) == pid and prop("SubState") == "running"
+            require((int(prop("MainPID")) == pid and prop("SubState") == "running"))
         pg.stop()
         service_status(pid, lambda s: not s["connected"] and s["connection_failures"] >= 1
                        and s["in_flight_readings"] == 0)
         inject(2, 3)
         pending = service_status(pid, lambda s: s["reading_depth"] == 3 and s["degraded"] == 1)
-        assert pending["readings_written"] == 2 and pending["readings_dropped"] == 0
-        assert pending["in_flight_readings"] == 0
+        require((pending["readings_written"] == 2 and pending["readings_dropped"] == 0))
+        require((pending["in_flight_readings"] == 0))
         killed_ms = int(time.monotonic() * 1000)
         run(["sudo", "systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", unit])
         deadline = time.monotonic() + 6
@@ -512,7 +513,7 @@ def systemd_gate(executable, pg):
         pid2 = int(prop("MainPID"))
         restarted_ms = int(time.monotonic() * 1000)
         restarted = service_status(pid2, lambda s: s["readings_queued"] == 0 and s["degraded"] == 1)
-        assert restarted["run_id"] != rid
+        require((restarted["run_id"] != rid))
         run(["sudo", "systemctl", "kill", "--kill-who=main", "--signal=SIGSTOP", unit])
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
@@ -522,21 +523,21 @@ def systemd_gate(executable, pg):
         else:
             raise AssertionError("watchdog did not restart stopped main")
         restarts = int(prop("NRestarts"))
-        assert restarts >= 2
+        require((restarts >= 2))
         start = time.monotonic()
         run(["sudo", "systemctl", "stop", unit])
         elapsed = time.monotonic() - start
-        assert prop("ActiveState") == "inactive" and elapsed < 2
+        require((prop("ActiveState") == "inactive" and elapsed < 2))
         journal = run(["sudo", "journalctl", "-u", unit, "--since", journal_since,
                        "--no-pager", "-n", "10000"]).stdout
-        assert "Watchdog timeout" in journal
+        require(("Watchdog timeout" in journal))
         directory = os.environ.get("VIGIL_EVIDENCE_DIR")
         if directory:
             Path(directory, "systemd-journal.log").write_text(journal)
         pg.start()
-        assert readings(pg, rid) == [2800, 2801]
-        assert readings(pg, restarted["run_id"]) == []
-        assert pg.sql(f"SELECT coalesce(sum(reading_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'") == "0"
+        require((readings(pg, rid) == [2800, 2801]))
+        require((readings(pg, restarted["run_id"]) == []))
+        require((pg.sql(f"SELECT coalesce(sum(reading_drops),0) FROM vigil.checkpoints WHERE run_id='{rid}'") == "0"))
         print(f"PASS systemd: unprivileged uid={uid}, Type=notify ready, healthy watchdog, "
               f"SIGKILL + watchdog restarts={restarts}, outage_stop_s={elapsed:.3f}, "
               f"committed=2 crash_lost=3 restart_ms={restarted_ms-killed_ms}")

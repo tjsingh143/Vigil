@@ -1,4 +1,5 @@
 """Evidence must preserve identifiers while exposing counters as numbers."""
+from verification import require  # also refuses optimized execution before fixture imports
 import unittest
 from monitor_integration import parse
 

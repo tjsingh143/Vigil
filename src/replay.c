@@ -212,6 +212,7 @@ void *vigil_replay_worker(void *context)
             slot->poison=fatal;
             slot->state=VIGIL_SLOT_RESULT;
             vigil_unlock(&slot->mutex);
+            vigil_test_hook("after_remote_result");
         }
         if (!ok) {
             if (conn!=NULL) PQfinish(conn);

@@ -3,6 +3,7 @@
 Creates a detached baseline worktree and disposable native spools/PG clusters.
 All raw trials retained; percentiles use nearest rank, no outlier removal.
 """
+from verification import require  # also refuses optimized execution before fixture imports
 import argparse
 from contextlib import contextmanager
 import hashlib
@@ -31,7 +32,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def distribution(values):
     v=sorted(values)
-    assert v
+    require((v))
     return dict(n=len(v),min=v[0],p50=v[math.ceil(.5*len(v))-1],p95=v[math.ceil(.95*len(v))-1],
                 p99=v[math.ceil(.99*len(v))-1],max=v[-1],mean=statistics.mean(v),
                 stdev=statistics.stdev(v) if len(v)>1 else 0)
@@ -86,22 +87,22 @@ def trial(label,exe,init,seconds,root,output):
             endpoint=latest(d)
             endpoint_local=next((e for e in reversed(d.events) if e['event']=='outbox'),None)
             status_window_s=(endpoint['now_ms']-warm['now_ms'])/1000
-            assert status_window_s>0
+            require((status_window_s>0))
             complete_start=time.monotonic()
             healthy=wait_p(d,lambda p:p['readings_written']==200+seconds*100 and caught_up(p),timeout=40)
             completion_s=time.monotonic()-complete_start
             local=wait_local(d,lambda s:s['local_readings']==200+seconds*100) if path else None
             remote_records=healthy['records_written']-warm['records_written']
-            if path: assert local['local_committed']==healthy['records_written']
+            if path: require((local['local_committed']==healthy['records_written']))
             # Save the healthy boundary before deliberately creating staleness.
             healthy_resources=measured['samples']+[before,cpu_end]
             reading_count=200+seconds*100
-            assert healthy['readings_dropped']==healthy['events_dropped']==0
-            assert pg.sql("SELECT count(*) FROM vigil.history WHERE kind='reading'")==str(reading_count)
+            require((healthy['readings_dropped']==healthy['events_dropped']==0))
+            require((pg.sql("SELECT count(*) FROM vigil.history WHERE kind='reading'")==str(reading_count)))
             silent=d.wait(lambda s:s['valid_readings']==reading_count and source(s,1,0)['freshness']=='stale')
             alarm=next(e for e in reversed(d.events) if e['event']=='alarm' and e['pod']==1 and e['channel']==0 and e['kind']=='communication_lost' and e['state']=='active')
             age=alarm['now_ms']-source(silent,1,0)['last_valid_ms']
-            assert 500<=age<=720
+            require((500<=age<=720))
             wait_p(d,caught_up)
             pg.stop()
             wait_p(d,lambda p:not p['connected'] and p['degraded'],timeout=5)
@@ -109,7 +110,7 @@ def trial(label,exe,init,seconds,root,output):
             outage=stream(d,raw,reading_count,600,100,path)
             if path: wait_local(d,lambda s:s['local_readings']==reading_count+600)
             pending=wait_p(d,lambda p:p['readings_queued']==reading_count+600)
-            assert pending['readings_dropped']==pending['events_dropped']==0
+            require((pending['readings_dropped']==pending['events_dropped']==0))
             # Preserve same-process backlog, no kill in comparative performance.
             restored=time.monotonic(); pg.start(); available=time.monotonic()
             d.pump(0)
@@ -117,14 +118,14 @@ def trial(label,exe,init,seconds,root,output):
             done=wait_p(d,lambda p:p['readings_written']==reading_count+600 and caught_up(p),timeout=90)
             drained=time.monotonic()
             first=next(e for e in d.events[recovery_start_index:] if e['event']=='persistence' and e['readings_written']>reading_count)
-            assert done['readings_dropped']==done['events_dropped']==0
-            assert pg.sql("SELECT count(*) FROM vigil.history WHERE kind='reading'")==str(reading_count+600)
+            require((done['readings_dropped']==done['events_dropped']==0))
+            require((pg.sql("SELECT count(*) FROM vigil.history WHERE kind='reading'")==str(reading_count+600)))
             d.stop(); final=latest(d)
-            assert final['abandoned_readings']==final['abandoned_events']==0
+            require((final['abandoned_readings']==final['abandoned_events']==0))
         inv=inventory(path,output/'local-final') if path else None
         if inv:
-            assert inv['meta']['pending_records']==inv['meta']['pending_batches']==inv['meta']['pending_payload_bytes']==0
-            assert inv['meta']['admitted_readings']==inv['meta']['retired_readings']==reading_count+600
+            require((inv['meta']['pending_records']==inv['meta']['pending_batches']==inv['meta']['pending_payload_bytes']==0))
+            require((inv['meta']['admitted_readings']==inv['meta']['retired_readings']==reading_count+600))
         wall=cpu_end['at_s']-before['at_s']
         result=dict(label=label,warmup_readings=200,measured_readings=seconds*100,healthy=healthy,local=local,
             measured=measured,healthy_completion_observation_s=completion_s,
@@ -162,8 +163,8 @@ def main():
     ap.add_argument('--seconds',type=int,default=60)
     ap.add_argument('--output',type=Path,required=True)
     args=ap.parse_args()
-    assert sys.platform=='linux' and not sys.flags.optimize
-    assert 3<=args.runs<=10 and 60<=args.seconds<=600
+    require((sys.platform=='linux' and not sys.flags.optimize))
+    require((3<=args.runs<=10 and 60<=args.seconds<=600))
     def terminate(signum, _frame):
         raise SystemExit(128+signum)
     signal.signal(signal.SIGTERM,terminate)
@@ -172,7 +173,7 @@ def main():
     build=args.build.resolve()
     cache=(build/'CMakeCache.txt').read_text()
     for required in ('CMAKE_BUILD_TYPE:STRING=Release','VIGIL_SANITIZERS:BOOL=OFF','VIGIL_TSAN:BOOL=OFF'):
-        assert required in cache, 'matched benchmark requires unsanitized GCC Release: '+required
+        require((required in cache), lambda: ('matched benchmark requires unsanitized GCC Release: '+required))
     evidence=Evidence(args.output)
     report=evidence.report
     report.update(baseline_commit=BASELINE,run_count=args.runs,seconds=args.seconds,warmup_seconds=2,
@@ -197,7 +198,7 @@ def main():
                 keys=('CMAKE_C_COMPILER:','CMAKE_C_FLAGS:','CMAKE_C_FLAGS_RELEASE:')
                 return [line for line in text.splitlines() if line.startswith(keys)]
             report['matched_cmake_cache']=selected_cache(cache)
-            assert report['matched_cmake_cache']==selected_cache((baseline/'build/CMakeCache.txt').read_text())
+            require((report['matched_cmake_cache']==selected_cache((baseline/'build/CMakeCache.txt').read_text())))
             report['original_source_sha256']=subprocess.check_output([sys.executable,'-c',
                 'import sys; sys.path.insert(0,sys.argv[1]); from evidence import source_digest; print(source_digest())',str(baseline/'tests')],cwd=baseline,text=True).strip()
             # Identical probe source/flags, each tree's actual unchanged core.
