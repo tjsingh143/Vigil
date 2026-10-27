@@ -1,4 +1,4 @@
-# Durable outbox and Stage 2 PostgreSQL replay
+# Durable outbox and PostgreSQL replay
 
 Stage 1 replaces the volatile PostgreSQL writer with a dedicated SQLite owner.
 The CAN poll loop, live alarms, freshness, progress, plausibility, decoder and
@@ -24,8 +24,8 @@ bytes, history or unverified legacy checkpoints raise VG001. Malformed content
 raises VG002. All effects roll back on failure. V1-only contracts still test 001
 alone; v1 ingestion of unrelated legacy runs remains compatible.
 
-The owner applies 001 then 002 explicitly, or runs `scripts/setup-database` only
-when deployment is authorized. New objects require SELECT/INSERT and EXECUTE on
+The database administrator applies 001 then 002 explicitly, or runs
+`scripts/setup-database` for a local cluster. New objects require SELECT/INSERT and EXECUTE on
 `validate_replay(bytea)` and `replay_batch(bytea)`; no runtime UPDATE/DELETE/DDL.
 PUBLIC has no new-function EXECUTE. No daemon startup applies migrations. Session
 synchronous_commit is on; capability probes require schema 2, fsync and
@@ -58,7 +58,7 @@ its fixed limits. Idle liveness probes create no empty history batches.
 Use real Linux ext4/XFS, including the Lima VM's native filesystem. The macOS
 repository mount, tmpfs and network filesystems are rejected. Build dependencies
 use SQLite >=3.51.3 with JSON, STRICT and thread safety; CMake checks the library
-version and the owner checks runtime capabilities/settings. `scripts/setup-linux`
+version and the storage owner checks runtime capabilities/settings. `scripts/setup-linux`
 calls `scripts/setup-sqlite`, which refuses an optimized Python interpreter before
 any download, explicitly verifies the upstream sqlite3.c SHA3-256 (a mismatch
 stops before configure/build/install) and
@@ -75,13 +75,13 @@ CMake uses that prefix when available. The library includes the upstream
 ./scripts/dev build/vigild --outbox-path /tmp/my-vigil-state/outbox.sqlite3
 ```
 
-For an explicitly authorized service installation, run `scripts/install-service`,
+For a service installation, run `scripts/install-service`,
 then `scripts/setup-outbox` with no argument to provision the vigil user's
 `/var/lib/vigil/outbox.sqlite3`. Start/enable remains explicit. The unit retains
 User/Group=vigil, no capabilities, strict filesystem protections and a main-loop
 watchdog. `StateDirectory=vigil`, mode 0700, grants only its state directory;
-startup timeout is 30 s and stop timeout 3 s. This checkpoint does not install or
-start the developer's default service.
+startup timeout is 30 s and stop timeout 3 s. The tests never install or start
+the default service.
 
 Initialization accepts only an empty private directory with >=2 GiB available.
 Directory mode 0700, DB/WAL/SHM/lock mode 0600, current ownership and regular
@@ -244,4 +244,4 @@ wakes from timed waits; no Vigil race, lock-order or direct mutex/signal call
 is suppressed. System-library internals are outside sanitizer proof.
 
 Current production-binary demonstration: `scripts/demo --build build-resilience-release`.
-Setup, upgrade/rollback and independent-review handoff: [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md).
+Setup, upgrade/rollback and review guidance: [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md).

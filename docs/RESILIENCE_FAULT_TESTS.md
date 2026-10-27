@@ -1,15 +1,14 @@
-# Resilience Stage 3 fault tests
+# Resilience fault tests (Stage 3)
 
 Stage 4 reuses this entire fault gate and adds the production demo and matched
-benchmarks; current commands/results and handoff are in
-[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md) and
-[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Stage 3 stopping statements below
-record that earlier authorization, now superseded by the owner’s Stage 4 request.
+benchmarks. Current commands are in [VERIFICATION.md](VERIFICATION.md) and
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md); release results are in
+[RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md). Status statements below describe
+Stage 3 when it completed.
 
 **Stage 3 PASS for the software failure contract.** All 21 scenario categories
-passed the final clean Linux gate; no mandatory command was skipped. Stage 4,
-deployment and publication are outside this checkpoint.
-One Codex agent; starting commit `4c179bc`, initially clean working tree.
+passed the final clean Linux gate; no mandatory command was skipped.
+Starting commit `4c179bc`, initially clean working tree.
 
 The independent baseline built Debug on native Ubuntu ARM64 and passed all four
 C suites. An independently written smoke scenario sent values 2200/2800/2200
@@ -66,12 +65,12 @@ legitimate failing integrity assertion was removed.
 
 Cleanup inspection found no test daemon, loop mount or transient test unit;
 default vigild remained inactive and installed PG 16/main remained online.
-No deployment, production-data change, push, publication or Stage 4 work occurred.
+No deployment or production-data change occurred.
 
 ## Failure-boundary coverage
 
-All rows passed in the final gate. Scenario numbers refer to the owner's
-Stage 3 inventory, not a count of individual assertions or process executions.
+All rows passed in the final gate. Scenario numbers refer to the Stage 3
+scenario inventory, not a count of individual assertions or process executions.
 
 | # | Scenario | Deterministic control and oracle |
 | --- | --- | --- |
@@ -107,11 +106,12 @@ boundary plan and invariant assertions remain the same. No sleep selects a kill.
 ## Reproduction and evidence
 
 ```sh
-./scripts/dev sh -c 'cd /tmp/vigil-stage3-source; ./scripts/check-resilience --clean --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage3/reproduce-full'
-./scripts/dev sh -c 'cd /tmp/vigil-stage3-source; .venv/bin/python tests/resilience_adversarial.py --build build-resilience-debug --seed 59 --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage3/reproduce-59'
+./scripts/dev sh -c 'cd /tmp/vigil-stage3-source; ./scripts/check-resilience --clean --output REPO/artifacts/resilience-stage3/reproduce-full'
+./scripts/dev sh -c 'cd /tmp/vigil-stage3-source; .venv/bin/python tests/resilience_adversarial.py --build build-resilience-debug --seed 59 --output REPO/artifacts/resilience-stage3/reproduce-59'
 ```
 
-Use a fresh output directory and the tested source. The gate records parent
+`REPO` is the absolute path of the mounted repository; the native clone in
+`/tmp` holds the tested source. Use a fresh output directory and the tested source. The gate records parent
 commit, implementation digest, commands, expectations, exits and timings.
 `*-adversarial/results.json` records build hash, seeds, expected assertions and
 failures. Each seed's `run.json` records failpoint tokens, kill/stop exits,

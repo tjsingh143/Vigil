@@ -1,16 +1,16 @@
-# Vigil Resilience failure contract — Stage 0B
+# Vigil Resilience failure contract
 
-Stage 4 release reference: [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md),
-with event-state meanings below unchanged. Acceptance wording for earlier
-stages is historical; observed current results are in RESILIENCE_STATE.md.
+Contract version 1, 2026-10-22 America/Los_Angeles (Stage 0B). **Design
+acceptance criteria for the full target.** The local outbox (Stage 1) and remote
+replay (Stage 2) are implemented; the event-state meanings below are unchanged
+in the release. Acceptance wording for each stage is kept as written.
 
-Contract version 1, 2026-10-22 America/Los_Angeles. **Design acceptance criteria;
-the full target; local Stage 1 and remote Stage 2 are implemented. Current scope and
-evidence are in [OUTBOX.md](OUTBOX.md) and [RESILIENCE_STATE.md](RESILIENCE_STATE.md).**
 [RESILIENCE_ARCHITECTURE.md](RESILIENCE_ARCHITECTURE.md) specifies the schema,
 algorithms, numeric bounds and file interfaces. This document defines observable
-meaning, allowed losses and required proof. Current evidence and scope live in
-[RESILIENCE_STATE.md](RESILIENCE_STATE.md).
+meaning, allowed losses and required proof. Current operation is in
+[OUTBOX.md](OUTBOX.md) and [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md);
+observed results are in [RESILIENCE_FAULT_TESTS.md](RESILIENCE_FAULT_TESTS.md)
+and [RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md).
 
 ## States and transaction boundaries
 
@@ -163,8 +163,8 @@ Every row records its expectation **before** execution, uses disposable state,
 exits nonzero on a failed assertion, and saves SQL/local inventory plus exact
 binary/source digest and failpoint tokens. 'Local inventory' is a stopped,
 recovered SQLite DB with schema/origin/order/payload/counter checks. Tests compare
-full identities and bytes, not merely aggregate row counts. This is the full target matrix. Stage 1's local subset and observed results
-are recorded in RESILIENCE_STATE.md; remote crash/commit assertions are implemented by Stage 2.
+full identities and bytes, not merely aggregate row counts. This is the full target matrix. Stage 1 implemented the local subset;
+remote crash/commit assertions are implemented by Stage 2.
 
 | Test | Deterministic setup | Machine-checkable assertion |
 | --- | --- | --- |
@@ -214,12 +214,12 @@ separate from passing software process-crash tests and stays unclaimed until run
 
 Stage 0B acceptance is a source-grounded, internally reviewed design with no
 open product decisions. Stage 1 readiness means the specified local module
-can be implemented after explicit owner authorization. It does not mean the
+can be implemented. It does not mean the
 outbox exists, these tests passed, or deployment/production changes are approved.
 
 ## Stage 1 acceptance slice
 
-The owner authorized daemon/local integration for this checkpoint. Tests cover
+Stage 1 includes daemon/local integration. Tests cover
 local identity/append/rollback/order/reopen, logical/physical limits, capture
 races, storage faults, volatile lane reserve, shutdown, real process kills and
 original live monitoring. Remote transmission, acknowledgement, retirement,
@@ -235,12 +235,13 @@ separate. SIGKILL evidence does not qualify hardware power-loss behavior.
 Stage 2 implements remote rollback/ambiguity, origin/content equality and
 conflicts, FIFO replay across runs, atomic local retirement/recovery, bounded
 retries, poison handling, independent admission, lifecycle and bounded shutdown.
-`tests/resilience_replay.py` maps the owner's A-J boundaries to deterministic
+`tests/resilience_replay.py` maps the A-J crash boundaries to deterministic
 pipe hooks or a real-PG transaction pause/response-withholding proxy. Direct
 inventories and SQL reconcile keys, payload bytes, history, snapshots, gaps,
 pending/retired prefixes and counts. `resilience_database_contract.py` tests
 repeatable 001+002, runtime privileges, concurrent equality/conflicts and rollback.
-Current observed results are in RESILIENCE_STATE.md; matrix entries are design
+Observed results are in [RESILIENCE_FAULT_TESTS.md](RESILIENCE_FAULT_TESTS.md)
+and [RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md); matrix entries are design
 requirements, not evidence by themselves.
 
 The architecture amendment records the auxiliary invoker validator, conservative
@@ -252,11 +253,10 @@ these refinements weakens payload identity or the local durability boundary.
 The Stage 3 persistence benchmark/instrumentation, hardware power cuts, physical
 CAN qualification and remote retention remain outside this checkpoint. Stage 2
 acceptance does not claim every optional/full-target matrix workload was run.
-Stop after the local Stage 2 commit; no Stage 3, deployment or publication.
 
 ## Independent audit remediation acceptance (2026-10-25)
 
-The owner authorized correction of F1–F4 and a new complete Linux regression;
+The remediation corrected F1–F4 and added a new complete Linux regression;
 prior stage stop statements above are historical. Two additional obligations
 make existing recovery/accounting promises explicit: a committed held append
 must be publishable before the confirmed earlier retirement when the latter
@@ -267,4 +267,4 @@ exercises the real coordinator with both owners overlapping, current/old-run
 counters, directory-sync/NOMEM errors and SIGKILL at reconciliation boundaries.
 The [remediation report](RESILIENCE_REMEDIATION.md) records actual results and
 remaining qualification limits. No wire, schema, durability or retention
-contract is weakened, and publication remains outside the authorized scope.
+contract is weakened.

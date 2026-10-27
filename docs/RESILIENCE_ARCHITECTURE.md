@@ -1,33 +1,32 @@
-# Vigil Resilience architecture — Stage 0B
+# Vigil Resilience architecture
 
-The completed Stage 4 architecture diagram and operating/review instructions
-are in [RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md). Design-time future-tense
-sections below retain their original checkpoint context. Current implementation
-and verification identity are in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
+Design version 1, 2026-10-22 America/Los_Angeles (Stage 0B): the **full
+architecture target**, written before implementation. Design-time future-tense
+sections keep that context. Dated amendments at the end record how Stage 1,
+Stage 2 and the audit remediation refined the design.
 
-Design version 1, 2026-10-22 America/Los_Angeles. **Full architecture target.**
-Stage 1 local implementation/status: [OUTBOX.md](OUTBOX.md),
-[RESILIENCE_STATE.md](RESILIENCE_STATE.md). Stage 2 replay is implemented; current operation and refinements are in OUTBOX.md and the amendment below.
-The normative failure meanings and acceptance tests are in
-[RESILIENCE_CONTRACT.md](RESILIENCE_CONTRACT.md); actual baseline evidence is in
-[RESILIENCE_BASELINE.md](RESILIENCE_BASELINE.md). The owner subsequently authorized Stage 1 implementation and daemon integration.
+The implemented architecture diagram and operating instructions are in
+[RESILIENCE_RELEASE.md](RESILIENCE_RELEASE.md); current operation and bounds are
+in [OUTBOX.md](OUTBOX.md); release verification is summarized in
+[RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md). The normative failure meanings and
+acceptance tests are in [RESILIENCE_CONTRACT.md](RESILIENCE_CONTRACT.md); baseline
+evidence for the 1.0 code is in [RESILIENCE_BASELINE.md](RESILIENCE_BASELINE.md).
 
 ## Source basis and scope
 
 Independently inspected `src/{vigild,queue,persistence,monitor,protocol}.c`,
 the queue/persistence headers, `migrations/001_history.sql`, the service,
 CMake, provisioning/check scripts and persistence/database/evidence fixtures.
-Read the entire eight-page v3 brief and required state, decisions, learning,
-monitoring and persistence documents. Starting HEAD is `60c3be2`; tree clean.
+Read the eight-page v3 brief and the project's state, decision, monitoring and
+persistence records. Starting HEAD is `60c3be2`; tree clean.
 The current implementation digest equals the saved Stage 0 gate digest,
 `b87b8f78da76c8bcfbf7c07d7f2ec26f795ca27d56bb18eedebf864479cf419b`;
 all ten saved command exits are zero. No contradictory baseline evidence remains.
 
-The cached upstream commits `c66b28d`, `cd579fb`, `f7a2208` change documentation
-only and delete required engineering records. This design deliberately retains
-the local baseline and those records. Use this local design checkpoint as the
-Stage 1 base; do not merge those deletions as a prerequisite. No fetch, pull,
-push, deployment or installed-database operation is part of this checkpoint.
+The upstream commits `c66b28d`, `cd579fb`, `f7a2208` change documentation only,
+so implementation proceeded from this local design checkpoint without them. The
+release line merged them later without changing any implementation file. No
+deployment or installed-database operation is part of this checkpoint.
 
 Necessary extensions to brief §§3.3–3.4 and the original persistence contract:
 add a second persistence worker and recover committed local history; retain
@@ -302,7 +301,7 @@ this barrier. Counter exhaustion is handled like the other durable allocators.
 
 Do not overwrite corrupt files, delete WAL/SHM, auto-salvage into a fresh spool,
 or silently skip records. Offline recovery preserves the complete DB/WAL set;
-resetting/discarding history needs a separate explicit owner decision. An I/O
+resetting/discarding history needs a separate explicit operator decision. An I/O
 or corruption failure may invalidate the assumed storage guarantees; reporting
 a fault cannot reconstruct destroyed bytes.
 
@@ -335,7 +334,7 @@ backlog is not an abandoned/lost volatile record.
 **002 is necessary.** Migration 001 returns early for an existing checkpoint
 and ignores history conflicts; neither verifies payload or originating-run
 content. Preserve 001 byte for byte, its function and all historical tables.
-Future `002_resilience.sql`, applied by the owner, adds the objects below.
+Future `002_resilience.sql`, applied by the database administrator, adds the objects below.
 All new PG columns are NOT NULL, with signed ranges and UUID/token/length
 constraints matching the local format; keys/FKs are explicit.
 
@@ -425,7 +424,7 @@ The transaction/conflict behavior is grounded in
 and [WAL durability settings](https://www.postgresql.org/docs/16/runtime-config-wal.html).
 Network transmission is at least once under retry, never exactly once.
 
-## Exact implementation seams for a later authorized stage
+## Exact implementation seams for a later stage
 
 | File/interface | Planned responsibility |
 | --- | --- |
@@ -440,13 +439,13 @@ Network transmission is at least once under retry, never exactly once.
 
 Stage 1's narrow implementation slice is the outbox module, local unit/fault
 tests and build dependency only; preserve the original daemon until a later
-explicitly authorized integration checkpoint. All wire, API/dashboard, hardware,
+integration checkpoint. All wire, API/dashboard, hardware,
 Buildroot, authentication, remote retention and live-state restoration remain
 outside this resilience design.
 
 ## Stage 1 scope amendment
 
-The owner's Stage 1 request explicitly broadened the earlier module-only slice
+Stage 1 was broadened from the earlier module-only slice
 to daemon CLI/status, initial snapshot, shutdown, service configuration and real
 process-kill tests. This supersedes the earlier narrow slice and stop wording.
 The SQLite owner is the only persistence worker in this stage. PG work slots,
@@ -462,7 +461,7 @@ and original PG scenarios are retained separately.
 
 ## Stage 2 implementation amendment (2026-10-23)
 
-The owner authorized the remote worker, migration 002, retirement/reconciliation
+Stage 2 added the remote worker, migration 002, retirement/reconciliation
 and A-J crash evidence. Earlier Stage 1 stopping/scope statements are historical.
 The local schema remains version 1; its existing prefix/retirement columns now
 support pending Stage 1 stores without a destructive migration. Validation
@@ -495,7 +494,7 @@ stalls remain outside application time bounds.
 current-origin process counters. Replayed old origins update lifetime spool
 retirement, never the new process's observation equations or live health cursor.
 The 60-second persistence benchmark and further instrumentation are deferred;
-Stage 2 does not authorize Stage 3 or a performance/physical CAN claim.
+Stage 2 includes no Stage 3 work and no performance or physical CAN claim.
 
 PG's idle/backoff scheduler uses monotonic absolute sleeps of at most 10 ms,
 separate from the storage queue condition waiter. Thus producer signals cannot

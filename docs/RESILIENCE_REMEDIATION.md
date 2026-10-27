@@ -2,10 +2,9 @@
 
 The independent audit rejected candidate `29b049e` at documentation HEAD
 `8a7347c6b940df24d0e5536d5c1f5e60272a07ef`. This remediation began at that exact
-HEAD with a clean tree. One Codex agent performs the repair and verification;
-this is not independent re-verification. The owner authorized focused fixes,
-real Linux regression, documentation and a local commit. No publication,
-deployment, production-data change, history rewrite or delegation is authorized.
+HEAD with a clean tree. This record is the remediation's own verification, not
+independent re-verification. Scope: focused fixes, a real Linux regression and
+documentation; no deployment or production-data change.
 
 > **Later note (2026-10-27):** the subsequent independent re-audit
 > (`artifacts/independent-reaudit-20261026/`) confirmed F1, F2 and F4 but found the
@@ -231,8 +230,8 @@ Python fallback completed the process/mount checks without installing tools.
 
 F1–F4 are resolved in the repaired candidate. No required regression gate remains
 unexecuted and no new release-blocking defect is known. The candidate is ready
-for a separate fresh independent Astra Max audit; it is not independently approved
-or published. The local commit receipt is
+for a separate fresh independent audit; it is not independently approved at
+this point. The local commit receipt is
 `artifacts/remediation-20261025/commit-receipt.json`.
 
 Existing limits remain: SIGKILL is not a power cut; real ext4 does not qualify XFS,
@@ -305,11 +304,10 @@ the offered 100/s monitoring load, exact counts and alarm timing checks.
 | Python verification | `tests/verification.py`, `tests/test_verification.py`, `tests/resilience_remediation.py`: unconditional oracle, optimization/negative controls and real coordinator interleavings |
 | Existing Python checks | All 20 pre-existing `tests/*.py` modules: early optimization guard, unchanged predicates converted to `require`; `evidence.py` records mode, `resilience_integration.py` supports multiple hook FDs, `verify_resilience.py` includes the new scenarios and testable subprocess-result check |
 | Scripts | `scripts/install-service`: current SQLite/schema-2 replay guidance; `scripts/check`, `scripts/check-ci`, `scripts/check-release`: accurate C-test expectation count |
-| Documentation | `CODEX_STATE.md`, `docs/RESILIENCE_STATE.md`, this report, `OUTBOX.md`, resilience architecture/contract/fault/release/performance documents, `DECISIONS.md`, `LEARNING_GUIDE.md` |
+| Documentation | This report, `OUTBOX.md`, resilience architecture/contract/fault/release/performance documents, and the project's state, decision and study records (not part of the published tree) |
 
 Original audit artifacts are unchanged. New raw logs, failing controls, scripts,
 JSON reports and native archives live under the separate artifact directories.
 Large runtime evidence remains local and ignored by Git; the tracked report
-records its paths and hashes for the next auditor. The next authorized step is
-fresh independent Astra Max review of the repaired local commit. No GitHub push,
-tag, release or portfolio package is part of this checkpoint.
+records its paths and hashes for the next auditor. The next step was a fresh
+independent review of the repaired commit; see [RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md).

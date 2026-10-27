@@ -1,7 +1,7 @@
-# Vigil Resilience performance comparison
+# Vigil 2.0 performance comparison
 
-Release-candidate measurements and exact acceptance results are recorded in
-[RESILIENCE_STATE.md](RESILIENCE_STATE.md). This report describes finite Linux
+Acceptance results for the release are summarized in
+[RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md). This report describes finite Linux
 application workloads, not hard real-time behavior, physical CAN, power-loss
 qualification or universal throughput limits. Final measured tables below are
 populated only from the completed candidate gate.
@@ -34,9 +34,11 @@ with no known reading/event loss and every repaired store drained to zero.
 
 The same Resilience executable has now measured remote window medians of 74.37,
 83.86, 81.20 (independent re-audit) and 74.21 readings/s, and daemon CPU from 11.52%
-to 19.31% of one core, on one shared VM. Because the binary did not change, these
-spreads are run-to-run environmental variation, not an F5 effect; they also show
-that one three-trial set cannot characterize this workload's capacity. The slower
+to 19.31% of one core, on one shared VM. The final independent audit's fresh
+rerun measured a 73.71 readings/s median (73.59–77.20). Because the binary did not
+change, no F5 runtime-code change explains these spreads; these non-isolated runs
+cannot establish their cause. They also show that one three-trial set cannot
+characterize this workload's capacity. The slower
 and costlier result is reported, not replaced by an earlier faster one. Remote
 replay still does not sustain the offered 100 readings/s for the natural batch
 shape; no sustainable-delivery guarantee is inferred.

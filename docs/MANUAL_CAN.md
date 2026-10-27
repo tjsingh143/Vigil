@@ -25,8 +25,8 @@ malformed input; setup/timeout errors exit **2**.
 Keep each run's filled copy and terminal transcript under `artifacts/`, recording
 PASS/FAIL beside each row. The first six rows are also reproduced verbatim by
 `tests/manual_commands.py`; the final verification report records its actual
-candump timestamps, decoder output and exit status. That is agent-executed
-command evidence, not a claim that a human has performed the checklist.
+candump timestamps, decoder output and exit status. That is scripted command
+evidence, not a claim that the checklist was performed by hand.
 
 For alarms unaffected by malformed input, duplicate rejection, exact jump loss,
 hysteresis, SQL gaps and crash loss, use `tests/fault_scenarios.py`. Interactive

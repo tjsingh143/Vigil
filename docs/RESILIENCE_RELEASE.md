@@ -1,10 +1,10 @@
-# Vigil Resilience release candidate
+# Vigil 2.0 release guide
 
-This is agent-performed engineering evidence for independent review, not an
-independent verification or a deployed release. The exact candidate identity,
-clean-gate outcomes and open limitations are in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
-The original brief's owner-first implementation process was explicitly changed
-by the owner's authorization; one Codex agent performed this stage.
+This guide covers the implemented 2.0 architecture, reproduction from a clean
+checkout, upgrade and rollback, and capacity and power-loss assumptions. The
+audited commit `e244c72`, its clean-gate results and the remaining limitations
+are summarized in [RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md). This is not a
+deployment record.
 
 ## Implemented architecture and event states
 
@@ -79,7 +79,8 @@ The clone is local; it does not fetch, push, provision production databases or
 install/start the default service. On another Linux host, create `.venv` in the
 clone using `python3 -m venv .venv`, then
 `.venv/bin/python -m pip install -r simulator/requirements.txt`.
-Use the candidate commit recorded in state, not an unpinned remote branch.
+Check out the release tag `vigil-v2.0.0` or the audited commit `e244c72`, not an
+unpinned branch.
 Retain `gate.json` and each command's log; expectations are recorded before each
 execution. The complete gate includes all Stage 3 seed schedules, original
 regressions, local/remote crash cuts, real ext4 and systemd, Release, ASan/UBSan,
@@ -90,9 +91,12 @@ quiet current/previous-origin recovery, directory-sync and usage-query NOMEM,
 exact publication accounting and reconciliation SIGKILL cuts. Every Python test
 entry refuses `-O` and `PYTHONOPTIMIZE` before fixture work; verification predicates
 raise unconditionally, and negative controls exercise the refusal and bad evidence.
-Python embedded in scripts is covered too: every invocation must be classified,
-inline programs must refuse optimization, and no tracked or embedded Python uses
-`assert` ([F5 remediation](RESILIENCE_F5_REMEDIATION.md)).
+Python embedded in scripts is covered within the discovery test's supported
+grammar: each discovered invocation must be classified, inline programs must
+refuse optimization, and no tracked or discovered embedded Python uses `assert`
+([F5 remediation](RESILIENCE_F5_REMEDIATION.md)). Absolute and versioned
+interpreter spellings fall outside that grammar
+([audit finding A2](RESILIENCE_AUDIT.md#nonblocking-findings)).
 
 Hosted CI runs `scripts/check-ci --clean`: strict GCC/Clang, unprivileged outbox
 units on a native local filesystem, Python/decoder CLI, disposable PostgreSQL
@@ -125,7 +129,8 @@ worktree at the recorded original baseline, without moving an existing branch.
 
 ## Upgrade and rollback
 
-Deployment is a separate owner-authorized operation; this stage performs none.
+Deployment is a separate operator decision; the tests never install or start
+the default service.
 Stop the service before changing the binary or inspecting a spool. Preserve a
 consistent stopped DB/WAL/SHM set, configuration, binary and matching dependency
 versions. Do not delete sidecars or copy a running spool as an upgrade backup.
@@ -188,15 +193,13 @@ an offline-store/startup test. Per-record asynchronous latency, queue-lock timin
 and SQLite heap instrumentation remain unmeasured as detailed in the performance
 report. These are qualification gaps, not claimed passed tests.
 
-## Independent-review handoff
+## Review guidance
 
-Review the current commit/digest and exact raw gate evidence in state, then
-reproduce on a fresh native filesystem. Trace a committed payload through
+Compare the commit and implementation digest with `gate.json` and the raw gate
+evidence, then reproduce on a fresh native filesystem. Trace a committed payload through
 append, original-run replay, exact PG receipt and local retirement. Audit error
 classification, uncertain local outcomes, FIFO poison handling, old/current-run
 cursors, bounds and cleanup. Compare every previously known durable identity
 against the local/remote union, not only row counts. Review the benchmark's
-measurement boundaries before interpreting comparisons. Owner understanding,
-independent review, hardware/power testing, XFS execution and hosted CI on this
-candidate remain separate qualifications. Stop after the local candidate;
-no publication, deployment or independent-verification declaration is implied.
+measurement boundaries before interpreting comparisons. Hardware and power-loss
+testing and XFS execution remain separate qualifications.

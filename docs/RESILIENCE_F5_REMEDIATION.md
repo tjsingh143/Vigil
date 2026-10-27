@@ -7,14 +7,13 @@ SQLite source-integrity check embedded in `scripts/setup-sqlite` disappeared und
 Python optimization. Its report and evidence remain unchanged under
 `artifacts/independent-reaudit-20261026/`.
 
-This remediation began at that exact commit with a clean tracked tree. The owner
-assigned it to Claude Code as a single agent, without subagents or delegation,
-and reserved Codex exclusively for a fresh independent audit afterwards; this
-deviation from AGENTS.md's Codex-only rule is recorded in DECISIONS.md. This is
-author verification, not independent approval. No push, tag, release, deployment,
-service installation, production-data change or Drive update was performed.
+This remediation began at that exact commit with a clean tracked tree. It was
+carried out separately from the independent audit that followed. This record is
+the remediation's own verification, not independent approval. No deployment,
+service installation or production-data change was performed.
 
-**Remediation checkpoint PASS — ready for a fresh independent Codex audit.**
+**Remediation checkpoint PASS — ready for a fresh independent audit.** That
+audit approved the result; see [RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md).
 The complete clean Linux gate passed 72/72 commands on the exact final
 implementation digest. New evidence: `artifacts/remediation-f5-20261027/`
 (ignored by Git, like earlier raw evidence).
@@ -221,7 +220,7 @@ committed tree is checked against the same digest. Reproduce from the repository
 | --- | --- |
 | Correction | `scripts/setup-sqlite` (only provisioning/production change) |
 | Regression tests | `tests/test_setup_sqlite.py` (new), `tests/test_verification.py`, `tests/evidence.py` |
-| Records | This report, `CODEX_STATE.md`, `docs/RESILIENCE_STATE.md`, `docs/DECISIONS.md`, `docs/LEARNING_GUIDE.md`, `docs/OUTBOX.md`, `docs/RESILIENCE_RELEASE.md`, `docs/RESILIENCE_PERFORMANCE.md`, forward note in `docs/RESILIENCE_REMEDIATION.md` |
+| Records | This report, `docs/OUTBOX.md`, `docs/RESILIENCE_RELEASE.md`, `docs/RESILIENCE_PERFORMANCE.md`, forward note in `docs/RESILIENCE_REMEDIATION.md`, and the project's state, decision and study records (not part of the published tree) |
 | Expectations and controls | `artifacts/remediation-f5-20261027/EXPECTATIONS.md`; `before/` (original script copy, macOS RED and controls); `after/`; `linux-focused/` (Linux RED against the original script, before/after drivers, unit and genuine runs, re-audit probe); `mutation/`; `negative_controls.py`; the re-audit probe copy `check_setup_guard.py` and its outputs |
 | Pin provenance | `genuine-source/` (official archive and 3.51.3 release log) |
 | Full gate | `linux-full/` (`gate.json`, 72 logs, result files, `native-inventories.tar.gz` and manifest), `gate-summary.json`, `final-inspection/`, `native-identity.json`, `run_final_gate.sh`, `prepare_native.py` |
@@ -245,12 +244,13 @@ cp artifacts/independent-reaudit-20261026/check_setup_guard.py artifacts/my-f5-p
   their only authenticity check. An archive with a genuine `sqlite3.c` but
   altered build files would pass. This scope predates F5 and is unrelated to
   interpreter optimization. Closing it needs a separately sourced pin for the
-  archive (or the build files) and is recorded as a follow-up for the owner, not
-  silently expanded here.
+  archive (or the build files) and is recorded as a follow-up, not silently
+  expanded here.
 - The installer trusts the invoking user's environment: `PATH` selects `curl`,
   `tar`, `python3` and `make`, and `PYTHONPATH` or the current directory could
   shadow `hashlib`. The refusal covers optimization only.
-- Hosted CI was not run for this change; local CI commands are not a hosted result.
+- Hosted CI was not run for this change at the time of this record; local CI
+  commands are not a hosted result.
 - Existing limits are unchanged: SIGKILL is not a power cut, vcan is not physical
   CAN, XFS/failover/power-loss are unqualified, and the measured remote delivery
   deficit remains.

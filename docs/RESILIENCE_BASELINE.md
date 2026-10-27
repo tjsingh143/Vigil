@@ -1,13 +1,12 @@
 # Vigil Resilience — Stage 0 baseline audit
 
-Audit date: 2026-10-22 America/Los_Angeles (2026-10-23 UTC). One Codex agent;
-no delegation. Scope is investigation and documentation only. The owner's
-Stage 0 request supersedes the earlier release stop only for this audit.
-No SQLite implementation, daemon change, migration change or Stage 1 is authorized.
+Audit date: 2026-10-22 America/Los_Angeles (2026-10-23 UTC). Scope is
+investigation and documentation only; no SQLite implementation, daemon change,
+migration change or Stage 1 work was part of this stage. Later results are in
+[RESILIENCE_AUDIT.md](RESILIENCE_AUDIT.md).
 
 ## Exact starting state and preservation
 
-- Repository root: `/Users/tj/Desktop/Vigil`.
 - Audited HEAD: `d179681a40497ada533d2f61e50b5ac60a6ca293`, branch `main`.
 - Initial tracked/index/untracked status: clean. Ignored builds, Python venv,
   bytecode and substantial earlier `artifacts/` evidence already existed.
@@ -18,12 +17,12 @@ No SQLite implementation, daemon change, migration change or Stage 1 is authoriz
 - The three commits are `c66b28d`, `cd579fb`, `f7a2208`. Their aggregate diff
   changes documentation/instructions, including deletion of the PDF and
   several engineering records. It changes no C, SQL, test, build or unit file.
-  This audit follows the actual local instructions and eight-page v3 brief.
+  This audit followed the local project instructions and the eight-page v3 brief.
 - Local history also includes release tag `vigil-v1` at `3ec973e`, then
   checkpoints 4/3/2/1 at `8ed444a`, `89f13f5`, `aa785cb`, `d37e81c`.
-- Initial inspection was read-only: Git status/index/history/remotes, complete
-  brief, state/decisions/learning guide, required source/contracts, fixtures,
-  scripts and workflow preceded project edits or test execution.
+- Initial inspection was read-only: Git status/index/history/remotes, the
+  brief and project records, required source/contracts, fixtures, scripts and
+  workflow preceded project edits or test execution.
 
 Fresh evidence root (ignored, local):
 `artifacts/resilience-stage0-20261023T000920Z/` (called **E** below).
@@ -141,7 +140,7 @@ PostgreSQL/libpq 16.15, systemd 255, Python 3.12.3. Initial VM was stopped;
 it was started without provisioning. Installed vigild was inactive/disabled.
 No installed database was queried, provisioned or stopped.
 
-The running kernel initially lacked vcan. The owner separately approved
+The running kernel initially lacked vcan. Separately approved environment changes:
 `sudo apt-get install -y --no-install-recommends --no-upgrade
 linux-modules-extra-6.8.0-142-generic` (installed 6.8.0-142.142),
 `scripts/vcan-up`, and the reviewed disposable systemd fixture. Package output
@@ -173,21 +172,22 @@ worktree's VERIFICATION.md is generated; the earlier original report is intact.
 
 ## Exact primary test commands and observed results
 
-All commands below ran inside Linux from E/full-source. Absolute interpreter
-and output paths are retained exactly as recorded by the verifier.
+All commands below ran inside Linux from E/full-source. `REPO` stands for the
+repository's absolute path; otherwise commands appear exactly as recorded by
+the verifier.
 
 | Command | Exit | Elapsed seconds |
 | --- | --- | --- |
 | `./scripts/check --clean` | 0 | 107.198 |
 | `./scripts/check-ci --clean` | 0 | 18.325 |
 | `./scripts/check-release --clean` | 0 | 30.624 |
-| `/Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-release/vigild --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-release` | 0 | 18.211 |
-| `/Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-sanitize/vigild --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-sanitize` | 0 | 18.054 |
-| `setarch aarch64 -R /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-tsan/vigild --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-tsan` | 0 | 18.289 |
-| `/Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/fault_scenarios.py --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/scenarios` | 0 | 25.692 |
-| `/Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/interview_demo.py --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/demo` | 0 | 6.837 |
-| `/Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/manual_commands.py --output /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/manual` | 0 | 0.087 |
-| `./scripts/fuzz 120 /Users/tj/Desktop/Vigil/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/fuzz` | 0 | 121.378 |
+| `REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-release/vigild --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-release` | 0 | 18.211 |
+| `REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-sanitize/vigild --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-sanitize` | 0 | 18.054 |
+| `setarch aarch64 -R REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/final_hardening.py --daemon build-tsan/vigild --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/hardening-tsan` | 0 | 18.289 |
+| `REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/fault_scenarios.py --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/scenarios` | 0 | 25.692 |
+| `REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/interview_demo.py --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/demo` | 0 | 6.837 |
+| `REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/.venv/bin/python tests/manual_commands.py --output REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/manual` | 0 | 0.087 |
+| `./scripts/fuzz 120 REPO/artifacts/resilience-stage0-20261023T000920Z/full-source/artifacts/stage0-full/fuzz` | 0 | 121.378 |
 
 Observed primary-gate results:
 
@@ -292,7 +292,7 @@ README/state and the API record the subsequent run. Preserve those timestamps.
 - Which service state path, deployment migration/grants and operational recovery
   procedure will be approved? None is deployed by this audit.
 
-Learning checkpoint: follow one record through enqueue, local-memory take,
+Key point: follow one record through enqueue, local-memory take,
 remote commit and client acknowledgement as four different boundaries. Existing
 same-process idempotency is useful infrastructure, but crash recovery also
 requires surviving payloads, identities and acknowledgement bookkeeping.
@@ -302,14 +302,12 @@ requires surviving payloads, identities and acknowledgement bookkeeping.
 **Stage 0 PASS.** The local implementation boundary, failure contracts, risk
 map and baseline verification status are established from code and a fresh
 complete clean Linux gate. Environment blockers were resolved with explicit
-owner approval; no verification blocker remains. Ready for architecture
+approval; no verification blocker remains. Ready for architecture
 finalization with the design questions above still open. Reconcile the three
 documentation-only upstream commits before choosing a later implementation
 base; this audit did not pull them. No Stage 1 work was started.
 
-Documentation changes are limited to this baseline, RESILIENCE_STATE, and short
-persistent-state/learning-guide updates required by AGENTS.md. Review includes
-source line references, numerical claims against raw JSON/logs, relative links,
-implementation digest equality and `git diff --check`. A local documentation
-commit may record this audit; no push/publication/deployment is authorized.
-Current stage status is maintained in [RESILIENCE_STATE.md](RESILIENCE_STATE.md).
+Review of this record covered source line references, numerical claims against
+raw JSON/logs, relative links, implementation digest equality and
+`git diff --check`. The three upstream documentation commits were later merged
+into the release line without changing any implementation file.
