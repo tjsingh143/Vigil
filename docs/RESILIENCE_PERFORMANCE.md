@@ -6,6 +6,41 @@ application workloads, not hard real-time behavior, physical CAN, power-loss
 qualification or universal throughput limits. Final measured tables below are
 populated only from the completed candidate gate.
 
+## F5 requalification measurements (2026-10-27)
+
+The F5 remediation changed only the SQLite installer and Python tests; the
+benchmarked production binaries are byte-identical to every earlier repaired run
+(Resilience `vigild` SHA-256
+`5c423d2fd742ec59c6a557ce8f5a4be4b9cbc02b751f889eb528550a9de68be7`, original
+`8e60df7dfc0545c16e885065b2f4f35932baf9303aa6a8ace01a5ae1223a8e6c`). Its clean gate
+(`artifacts/remediation-f5-20261027/linux-full/benchmark/`, source digest
+`e755cbdd42ad02b96dff060bb66b0ccf59eb5c0491f6cbad91137238ee966250`) passed all six
+paced trials and six finite bursts; every paced trial reconciled 6,800 readings
+with no known reading/event loss and every repaired store drained to zero.
+
+| F5 gate: median (range), three trials | Original Vigil | Repaired Resilience |
+| --- | --- | --- |
+| Paced monitoring readings/s | 100.00 (100.00–100.00) | 100.00 (100.00–100.00) |
+| Remote window readings/s | 100.00 (99.99–100.01) | 74.21 (73.47–75.84) |
+| Remote completion incl. catch-up readings/s | 100.00 (99.96–100.00) | 75.74 (75.57–76.65) |
+| 600-reading drain, s | 0.90 (0.85–0.95) | 8.87 (8.66–9.11) |
+| Daemon CPU, % of one core | 2.55 (2.42–2.87) | 19.31 (17.61–20.03) |
+| Peak sampled RSS, MiB | 7.77 (7.77–7.78) | 11.68 (11.65–11.70) |
+| Alarm lateness beyond 500 ms, ms | 8.00 (8.00–9.00) | 6.00 (5.00–8.00) |
+| Core frame p50, ns | 83.00 (83.00–125.00) | 83.00 (83.00–166.00) |
+| Core frame p95, ns | 84.00 (84.00–208.00) | 166.00 (84.00–250.00) |
+| Core frame p99, ns | 84.00 (84.00–209.00) | 167.00 (84.00–250.00) |
+| Local admission readings/s | N/A | 99.99 (99.98–100.00) |
+
+The same Resilience executable has now measured remote window medians of 74.37,
+83.86, 81.20 (independent re-audit) and 74.21 readings/s, and daemon CPU from 11.52%
+to 19.31% of one core, on one shared VM. Because the binary did not change, these
+spreads are run-to-run environmental variation, not an F5 effect; they also show
+that one three-trial set cannot characterize this workload's capacity. The slower
+and costlier result is reported, not replaced by an earlier faster one. Remote
+replay still does not sustain the offered 100 readings/s for the natural batch
+shape; no sustainable-delivery guarantee is inferred.
+
 ## Audit remediation measurements
 
 The original Stage 4 tables below are historical measurements of the candidate

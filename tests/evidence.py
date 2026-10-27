@@ -18,16 +18,19 @@ def utc():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def source_digest():
-    """Hash implementation paths, including new files; exclude generated artifacts/docs."""
+def implementation_files():
+    """Implementation paths, including new files; exclude generated artifacts/docs."""
     names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard"],
                                     cwd=ROOT, text=True).splitlines()
     prefixes = ("src/", "include/", "tests/", "scripts/", "simulator/", "migrations/",
                 "systemd/", "config/", ".github/", "fuzz/", "tools/", "env/", "embedded/")
+    return [name for name in sorted(set(names)) if name == "CMakeLists.txt" or name.startswith(prefixes)]
+
+
+def source_digest():
     digest = hashlib.sha256()
-    for name in sorted(set(names)):
-        if name == "CMakeLists.txt" or name.startswith(prefixes):
-            digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
+    for name in implementation_files():
+        digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     return digest.hexdigest()
 
 

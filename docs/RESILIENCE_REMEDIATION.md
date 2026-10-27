@@ -7,6 +7,12 @@ this is not independent re-verification. The owner authorized focused fixes,
 real Linux regression, documentation and a local commit. No publication,
 deployment, production-data change, history rewrite or delegation is authorized.
 
+> **Later note (2026-10-27):** the subsequent independent re-audit
+> (`artifacts/independent-reaudit-20261026/`) confirmed F1, F2 and F4 but found the
+> F3 objective incomplete: Python embedded in `scripts/setup-sqlite` still used
+> `assert` (finding F5). See [RESILIENCE_F5_REMEDIATION.md](RESILIENCE_F5_REMEDIATION.md).
+> The rest of this document is the unchanged 2026-10-26 record.
+
 **Remediation checkpoint PASS — ready for fresh independent audit.**
 The completed Linux qualification and evidence-integrity results are below.
 Original audit artifacts remain under `artifacts/independent-audit-20261024/`.

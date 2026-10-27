@@ -588,3 +588,36 @@ native storage and automatic archival. Both completed benchmark sets, including
 the slower first remote delivery result and variable core timings, are retained.
 No test predicate or deadline was relaxed. Stop at the local repair commit for
 fresh independent Astra Max review; no publication or portfolio work.
+
+## Re-audit F5 remediation — 2026-10-27
+
+The independent re-audit of be41eb1 confirmed F1, F2 and F4 and found F5: the
+SQLite source check in `scripts/setup-sqlite` was a Python `assert`. The owner
+authorized F5 remediation, regression tests, full Linux requalification,
+documentation and one local commit. The owner assigned this checkpoint to Claude
+Code as a single agent, with no subagents, and reserved Codex exclusively for the
+following independent audit. That is an explicit, instructed deviation from
+AGENTS.md's Codex-only rule; AGENTS.md itself is unchanged. HEAD was be41eb1 with
+a clean tracked tree. All historical audit and remediation evidence was hashed
+before work and is unchanged. No push, tag, publication, deployment, service
+installation or Drive action is authorized.
+
+Fix the check, not the test: compare the digest explicitly and refuse optimized
+Python before the install check, download, extraction or build, using the
+interpreter's own `sys.flags.optimize`. Keep the existing pin, because it is the
+`sqlite3.c` SHA3-256 that SQLite publishes in its release log, and record the
+unpinned archive build files as a residual risk instead of inventing a
+self-measured archive hash in this checkpoint.
+
+The F3 scan missed F5 because it enumerated `tests/*.py`. Define the verification
+surface by execution instead: any Python launched from a digest-covered file must
+be classified, every inline program must be extracted and must refuse every
+optimization mode before side effects, and no tracked or inline Python may use
+`assert`. The installer test stubs external commands to observe shell control
+flow and side-effect absence; it is a unit test of provisioning logic, not a
+substitute for Linux integration, and it changes only the install prefix line of
+a disposable copy. The genuine-source positive case needs the official archive
+and is run explicitly, not inside the release gate. No runtime source, SQL,
+service, configuration or workflow file changes, so F1/F2/F4 behavior is
+requalified by the unchanged full gate rather than altered. Details and evidence:
+[RESILIENCE_F5_REMEDIATION.md](RESILIENCE_F5_REMEDIATION.md).

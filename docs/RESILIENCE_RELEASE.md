@@ -52,7 +52,8 @@ on untampered local/remote history and receipts.
 Use an unprivileged Ubuntu 24.04 user with administrative setup access,
 PostgreSQL 16 tools, GCC/Clang, CMake, cmocka, systemd and can-utils.
 `scripts/setup-linux` declares the actual packages and installs pinned Python
-requirements. `scripts/setup-sqlite` checks the SQLite source hash and builds
+requirements. `scripts/setup-sqlite` refuses optimized Python, explicitly checks
+the SQLite source hash before configure/build/install and builds
 3.51.3 under `/opt/vigil-sqlite-3.51.3`; it preserves distribution SQLite.
 No `npm` or alternative package manager is involved in the project build.
 
@@ -89,6 +90,9 @@ quiet current/previous-origin recovery, directory-sync and usage-query NOMEM,
 exact publication accounting and reconciliation SIGKILL cuts. Every Python test
 entry refuses `-O` and `PYTHONOPTIMIZE` before fixture work; verification predicates
 raise unconditionally, and negative controls exercise the refusal and bad evidence.
+Python embedded in scripts is covered too: every invocation must be classified,
+inline programs must refuse optimization, and no tracked or embedded Python uses
+`assert` ([F5 remediation](RESILIENCE_F5_REMEDIATION.md)).
 
 Hosted CI runs `scripts/check-ci --clean`: strict GCC/Clang, unprivileged outbox
 units on a native local filesystem, Python/decoder CLI, disposable PostgreSQL

@@ -752,3 +752,30 @@ the same fixture, otherwise it might be testing an easier ordering. Python
 refusal protect test conclusions and fixture safety alike. Bad-database, child
 exit, fixture-identity and expected-result negative controls test the oracle.
 See [RESILIENCE_REMEDIATION.md](RESILIENCE_REMEDIATION.md) for evidence and limits.
+
+## Re-audit F5 — find every verifier, not every .py file
+
+The F3 repair hardened every `tests/*.py` module, yet the re-audit found one more
+`assert`: the SQLite source check, written as Python inside a bash heredoc in
+`scripts/setup-sqlite`. Under `-O` or `PYTHONOPTIMIZE` that heredoc exited 0, so
+`set -e` saw success and configure, build and `sudo make install` followed. A scan
+by file extension could never see it. `bash -n` proves syntax, not meaning. And
+because the VM already had SQLite installed, the script stopped at its install
+check, so no gate ever executed the verification path. A passing gate can hide an
+unexecuted path.
+
+Read the corrected script top to bottom. The first `python3 -c` asks the very
+interpreter that will verify whether it is optimized, before anything is
+downloaded. The heredoc refuses again, then compares with an ordinary `if` and
+exits 1. Then read `tests/test_setup_sqlite.py`: stub commands record what the
+script tried to do, so a test can prove that `configure` and `sudo` were never
+reached. That is evidence about control flow, not a mocked Linux integration.
+Note why the wrong-source tests replace only the install prefix: otherwise the
+already-installed SQLite would end the script before the path being tested.
+
+Predict before running: `PYTHONOPTIMIZE=1 ./scripts/setup-sqlite` on a fresh VM, and
+on the current VM. Both refuse before the install check; before the fix the fresh
+VM would have built and installed unverified source. Then explain what the pin
+does not cover: SQLite publishes the hash of `sqlite3.c`, so the archive's
+`configure` and Makefile still run unverified. A check protects only what it
+actually reads. See [RESILIENCE_F5_REMEDIATION.md](RESILIENCE_F5_REMEDIATION.md).

@@ -1,3 +1,44 @@
+# Vigil Resilience — re-audit F5 remediation complete
+
+**F5 remediated and requalified; ready for a fresh independent Codex audit. STOP.**
+Claude Code, one agent, by the owner's explicit direction (a recorded deviation
+from AGENTS.md; Codex is reserved for the audit). No subagents, push, tag, release,
+deployment, Drive or portfolio. Started at clean `be41eb1b8d4472a740c19e312d1a1314202a20d9`,
+which the independent re-audit failed: F1/F2/F4 resolved, F3 incomplete (F5).
+
+Implementation SHA-256: `e755cbdd42ad02b96dff060bb66b0ccf59eb5c0491f6cbad91137238ee966250`.
+The candidate is the local commit containing this checkpoint; exact identity is in
+`artifacts/remediation-f5-20261027/commit-receipt.json`. Full root cause, controls,
+gate results, auditor file list and limits: [F5 report](RESILIENCE_F5_REMEDIATION.md).
+This is author verification, not independent approval.
+
+`scripts/setup-sqlite` now refuses optimized Python before its install check or any
+download, and compares the pinned SQLite SHA3-256 explicitly (pin unchanged; it is
+the official 3.51.3 release-log value). New stubbed installer tests prove no
+configure/make/sudo after refusal or mismatch in all five interpreter modes; F3
+scans now cover Python embedded in scripts, workflow and build files. Wrong source
+was accepted, with build/install reached, in 4/4 optimized modes before; 0/4 after.
+No C, SQL, service, configuration, CMake or workflow file changed.
+
+Final clean Linux gate: **72/72 commands, exit 0**, 2026-10-27T05:01:18Z–05:33:26Z,
+native-clone digest equal to the tree's. 19 Python cases (1 genuine-source skip; that
+case passed 5/5 separately), 67 C cases/build, 120 coordinator scenarios/64 kills,
+75 adversarial executions, real vcan/ext4/systemd, SQL v1/v2, ASan/UBSan/TSan,
+Helgrind, analyzer, 91.1M fuzz inputs, demo and benchmarks pass. 1,339 archived
+inventories and 607 PG exports reconcile. Raw: `artifacts/remediation-f5-20261027/`.
+All 13,996 pre-existing and 15,735 re-audit evidence files are unchanged.
+
+Remote replay remains below the offered 100/s: median remote window 74.21/s in this
+run; the byte-identical binary previously measured 74.37–83.86/s. Local admission
+99.99/s. Residual: the installer hashes only `sqlite3.c`, so the archive's build
+files run unpinned (owner follow-up). Power cuts, physical CAN, XFS, failover and
+exhaustive OOM remain unqualified. Next step: fresh independent Codex audit of this
+commit. No publication.
+
+---
+
+# Historical F1–F4 remediation checkpoint (independent re-audit then found F5)
+
 # Vigil Resilience — audit remediation checkpoint complete
 
 **F1–F4 resolved; ready for a fresh independent Astra Max audit. STOP.**

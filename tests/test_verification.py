@@ -4,6 +4,7 @@ import ast
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import sys
@@ -12,14 +13,11 @@ import unittest
 from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-class VerificationTests(unittest.TestCase):
-    def test_all_entries_refuse_optimization_before_side_effects(self):
-        print("EXPECT: every Python test entry refuses -O and PYTHONOPTIMIZE=1 before fixture imports/actions", flush=True)
-        # A child audit hook rejects filesystem mutation, process launch and
-        # sockets. Refusal must come from our guard, never this tripwire.
-        probe = """
+OPTIMIZED = (('-O', ['-O'], None), ('-OO', ['-OO'], None),
+             ('PYTHONOPTIMIZE=1', [], '1'), ('PYTHONOPTIMIZE=2', [], '2'))
+# A child audit hook rejects filesystem mutation, process launch and
+# sockets. Refusal must come from our guard, never this tripwire.
+PROBE = """
 import sys, runpy, os
 sys.path.insert(0, sys.argv[1])
 def audit(event, args):
@@ -32,23 +30,88 @@ def audit(event, args):
 sys.addaudithook(audit)
 runpy.run_path(sys.argv[2], run_name='__main__')
 """
+# Python launched from shell scripts, workflows or build files. `python3-venv`
+# (a package name) and paths ending in .../python are not invocations.
+INTERPRETER = re.compile(r'(?<![\w./-])(?:\.venv/bin/python|python3?)(?![\w.-])')
+EMBEDDED = re.compile(r"(?<![\w./-])(?:\.venv/bin/python|python3?) (?:-c '([^']*)'|- [^\n]*<<'(\w+)'\n(.*?)\n\2\n)", re.S)
+# Invocations whose Python is protected elsewhere (test entries, discovery) or
+# that run no verification oracle (environment/corpus tools, AST-checked).
+CLASSIFIED = (r' tests/\w+\.py\b', r' -m unittest discover -s tests\b', r' -c \'', r' - .*<<\'\w+\'$',
+              r' -m venv \.venv$', r' -m pip install -r simulator/requirements\.txt$', r' fuzz/seed\.py ')
+
+
+def tracked(*suffixes, exclude=()):
+    """The digest-covered implementation files (scripts, workflows, build/service files, tests...)."""
+    from evidence import implementation_files
+    return [ROOT / n for n in implementation_files() if (ROOT / n).is_file()
+            and (not suffixes or n.endswith(suffixes)) and not n.endswith(exclude)]
+
+
+def embedded_programs():
+    """Every Python program text embedded in a non-Python file, keyed by location."""
+    programs = {}
+    for path in tracked(exclude=('.py', '.c', '.h', '.md', '.pdf')):
+        for n, match in enumerate(EMBEDDED.finditer(path.read_text())):
+            programs[f'{path.relative_to(ROOT)}#{n}'] = match.group(1) if match.group(1) is not None else match.group(3) + '\n'
+    return programs
+
+
+class VerificationTests(unittest.TestCase):
+    def test_all_entries_refuse_optimization_before_side_effects(self):
+        print("EXPECT: every Python test entry refuses -O, -OO and PYTHONOPTIMIZE=1/2 before fixture imports/actions", flush=True)
         for path in sorted((ROOT / 'tests').glob('*.py')):
-            for flag in ('-O', 'env'):
-                with self.subTest(entry=path.name, mode=flag):
+            for mode, flags, value in OPTIMIZED:
+                with self.subTest(entry=path.name, mode=mode):
                     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
                     env.pop('PYTHONOPTIMIZE', None)
-                    if flag == 'env': env['PYTHONOPTIMIZE'] = '1'
-                    result = subprocess.run([sys.executable, '-B', *(['-O'] if flag == '-O' else []),
-                                             '-c', probe, str(ROOT/'tests'), str(path)],
+                    if value: env['PYTHONOPTIMIZE'] = value
+                    result = subprocess.run([sys.executable, '-B', *flags,
+                                             '-c', PROBE, str(ROOT/'tests'), str(path)],
                                             env=env, capture_output=True, text=True, timeout=10)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('verification refuses Python optimization', result.stderr)
                     self.assertNotIn('SIDE_EFFECT_TRIPWIRE', result.stderr)
                     self.assertEqual(result.stdout, '')
 
+    def test_embedded_python_refuses_optimization_before_side_effects(self):
+        print("EXPECT: every Python invocation in shell/workflow files is classified; every embedded program refuses optimization before side effects", flush=True)
+        unclassified, program_invocations = [], 0
+        for path in tracked(exclude=('.py', '.c', '.h', '.md', '.pdf')):
+            for line in path.read_text().splitlines():
+                if line.lstrip().startswith('#'):
+                    continue  # shell/YAML/CMake comment, never executed
+                for match in INTERPRETER.finditer(line):
+                    rest = line[match.end():]
+                    if not any(re.match(p, rest) for p in CLASSIFIED):
+                        unclassified.append(f'{path.relative_to(ROOT)}: {line.strip()}')
+                    program_invocations += bool(re.match(r' -c \'| - .*<<\'\w+\'$', rest))
+        self.assertEqual(unclassified, [])
+        programs = embedded_programs()
+        # Every inline program found by the line scan must also be extracted and run below.
+        self.assertEqual(program_invocations, len(programs), programs)
+        self.assertTrue([k for k in programs if k.startswith('scripts/setup-sqlite#')], programs)
+        with tempfile.TemporaryDirectory(prefix='vigil-embedded-python-') as directory:
+            for location, program in programs.items():
+                source = Path(directory) / (location.replace('/', '_').replace('#', '_') + '.py')
+                source.write_text(program)
+                for mode, flags, value in OPTIMIZED:
+                    with self.subTest(program=location, mode=mode):
+                        env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+                        env.pop('PYTHONOPTIMIZE', None)
+                        if value: env['PYTHONOPTIMIZE'] = value
+                        result = subprocess.run([sys.executable, '-B', *flags, '-c', PROBE, str(ROOT/'tests'), str(source)],
+                                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('refuses Python optimization', result.stderr)
+                        self.assertNotIn('SIDE_EFFECT_TRIPWIRE', result.stderr)
+                        self.assertEqual(result.stdout, '')
+
     def test_no_optimization_sensitive_checks(self):
-        for path in (ROOT/'tests').glob('*.py'):
-            self.assertFalse(any(isinstance(n, ast.Assert) for n in ast.walk(ast.parse(path.read_text()))), path)
+        sources = {str(p.relative_to(ROOT)): p.read_text() for p in tracked('.py')}
+        sources.update(embedded_programs())
+        self.assertTrue([k for k in sources if k.startswith('scripts/setup-sqlite#')], sources.keys())
+        for name, text in sources.items():
+            self.assertFalse(any(isinstance(n, ast.Assert) for n in ast.walk(ast.parse(text))), name)
         called = []
         require(True, lambda: called.append('unexpected diagnostic'))
         self.assertEqual(called, [])

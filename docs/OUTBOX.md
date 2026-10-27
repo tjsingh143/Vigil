@@ -59,7 +59,9 @@ Use real Linux ext4/XFS, including the Lima VM's native filesystem. The macOS
 repository mount, tmpfs and network filesystems are rejected. Build dependencies
 use SQLite >=3.51.3 with JSON, STRICT and thread safety; CMake checks the library
 version and the owner checks runtime capabilities/settings. `scripts/setup-linux`
-calls `scripts/setup-sqlite`, which verifies the upstream sqlite3.c SHA3-256 and
+calls `scripts/setup-sqlite`, which refuses an optimized Python interpreter before
+any download, explicitly verifies the upstream sqlite3.c SHA3-256 (a mismatch
+stops before configure/build/install) and
 installs 3.51.3 under `/opt/vigil-sqlite-3.51.3`, preserving distribution SQLite.
 CMake uses that prefix when available. The library includes the upstream
 [WAL-reset fix](https://www.sqlite.org/releaselog/3_51_3.html).
