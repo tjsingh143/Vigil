@@ -57,3 +57,13 @@ Development-process files are not part of the published tree: state journals,
 the decision log, the project brief and study notes. Their full history remains
 in Git; for example, `git show e244c72:docs/DECISIONS.md` prints the final
 decision log.
+
+## Repository metadata
+
+Commit author and committer fields are kept as originally recorded. Changing
+them would change every commit identity, including the audited commit
+`e244c72`, the release commit `827e244` and the 1.0 baseline `d179681` that the
+release gate's benchmark checks out by hash. On 2026-10-27 the annotated tags
+`vigil-v1` and `vigil-v2.0.0` were re-issued with a neutral tagger identity.
+Their target commits (`3ec973e`, `827e244`) are unchanged, and each tag message
+records its previous tag object.

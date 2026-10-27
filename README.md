@@ -274,10 +274,13 @@ stages, two independent audits, remediation of the five findings they raised,
 and a final independent audit. The [remediation records](docs/README.md#historical-records)
 keep that sequence.
 
-The [1.0 review material](https://drive.google.com/drive/folders/1kzVJFzVXg2qrh3Uyq7s1tRkmlH5Cwl3t)
-(overview, testing notes, demo transcript) describes the 1.0.0 snapshot and its
-measurements:
-[review entry point](https://drive.google.com/file/d/1y-OnH_hf6DHMCPmKEhJKxzw-7EbS-kI3/view?usp=drivesdk) ·
-[overview](https://drive.google.com/file/d/1tEWgz8IWl19ZkqSTEGRgY-Vz6tb-LFFO/view?usp=drivesdk) ·
-[testing](https://drive.google.com/file/d/1LA_r6cO71KDWW-JSgDHIpf1H1c-O2pvk/view?usp=drivesdk) ·
-[code samples](https://drive.google.com/file/d/1xRuJ0U_Lqk9hvBxtRnMI7BvbeReI3dP-/view?usp=drivesdk)
+The [review package](https://drive.google.com/drive/folders/1kzVJFzVXg2qrh3Uyq7s1tRkmlH5Cwl3t)
+presents 2.0.0 for reviewers, with design rationale, verbatim code samples,
+redacted gate evidence and a demo walkthrough:
+[entry point](https://drive.google.com/file/d/11yKT3rnkRUCy9jKThT_fLrdBoEMBI1iT/view?usp=drivesdk) ·
+[overview](https://drive.google.com/file/d/1raBHGZagINIWISBnbGHY7pgDZrNBfXzN/view?usp=drivesdk) ·
+[deep dive](https://drive.google.com/file/d/1zRkqLxiUs6X3IOVCK5g4O5wyddlA5s7P/view?usp=drivesdk) ·
+[testing](https://drive.google.com/file/d/17WQDn8BE6pSIW0LnEZLjYvqCD3os4_UU/view?usp=drivesdk) ·
+[code samples](https://drive.google.com/file/d/1renSCAC2kBsyHDbnCs_9ZDiw3Ss8_rKq/view?usp=drivesdk).
+The 1.0.0 review material and its 2026-09-28 measurements are kept in that
+folder's [archive](https://drive.google.com/drive/folders/1TjTL9Ncoi_Sh_5dhlg3v4hYWvO1S2h8P).
